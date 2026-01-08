@@ -1,0 +1,79 @@
+================================================================================
+                        🔧 CORS FIX - QUICK REFERENCE
+================================================================================
+
+THE PROBLEM:
+------------
+Backend blocking requests from frontend (port 4000)
+
+THE FIX:
+--------
+Add this to your backend main.py (after "app = FastAPI()"):
+
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:4000", "http://127.0.0.1:4000"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+THEN:
+-----
+1. Save the file
+2. Stop backend (Ctrl+C)
+3. Restart backend: uvicorn main:app --reload --port 8000
+4. Hard refresh frontend (Ctrl+Shift+R)
+5. Try submitting form again
+
+VERIFY IT WORKED:
+-----------------
+Browser console should show:
+  ✅ Submitting to: http://localhost:8000/api/visitors/check-in-with-image
+  ✅ Response status: 201
+  ✅ API Response: {message: "Visitor checked in successfully...", ...}
+
+NO MORE ERRORS:
+  ❌ "CORS policy" error should be GONE
+  ❌ "Failed to fetch" error should be GONE
+
+================================================================================
+                    WHERE IS MY BACKEND MAIN FILE?
+================================================================================
+
+Look for these files in your backend folder:
+  • main.py
+  • app.py
+  • server.py
+  • api/main.py
+  • src/main.py
+
+The file will have: "app = FastAPI()" somewhere near the top
+
+================================================================================
+                         COMMON MISTAKES
+================================================================================
+
+❌ Didn't restart backend after changes
+❌ CORS middleware added AFTER route definitions (must be BEFORE)
+❌ Typo in allow_origins (must be "http://localhost:4000")
+❌ Wrong port number (must be 4000, not 3000)
+❌ Forgot to save the file
+❌ Didn't clear browser cache
+
+================================================================================
+                         TEST COMMAND
+================================================================================
+
+Run this to verify CORS is working:
+
+curl -X OPTIONS http://localhost:8000/api/visitors/check-in-with-image \
+  -H "Origin: http://localhost:4000" \
+  -H "Access-Control-Request-Method: POST" \
+  -v 2>&1 | grep "access-control-allow-origin"
+
+Expected output: access-control-allow-origin: http://localhost:4000
+
+================================================================================

@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Warehouse QR Code Generator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+
+        .input-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #333;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .help-text {
+            font-size: 14px;
+            color: #666;
+            margin-top: 8px;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 32px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 10px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .qr-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 30px;
+            margin-top: 30px;
+        }
+
+        .qr-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .qr-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
+        }
+
+        .qr-title {
+            font-size: 1.5em;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .qr-code {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            display: inline-block;
+            margin-bottom: 15px;
+        }
+
+        .qr-url {
+            font-size: 12px;
+            color: #666;
+            word-break: break-all;
+            margin: 10px 0;
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+        }
+
+        .download-btn {
+            background: #4CAF50;
+            padding: 10px 20px;
+            font-size: 14px;
+            margin: 5px;
+        }
+
+        .download-btn:hover {
+            box-shadow: 0 6px 12px rgba(76, 175, 80, 0.3);
+        }
+
+        .instructions {
+            background: #e3f2fd;
+            border-left: 4px solid #2196F3;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-radius: 8px;
+        }
+
+        .instructions h3 {
+            color: #1976D2;
+            margin-bottom: 10px;
+        }
+
+        .instructions ol {
+            margin-left: 20px;
+            color: #555;
+        }
+
+        .instructions li {
+            margin: 8px 0;
+        }
+
+        @media print {
+            body {
+                background: white;
+            }
+            .container {
+                box-shadow: none;
+            }
+            button {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏭 Warehouse QR Code Generator</h1>
+        <p class="subtitle">Generate QR codes for visitor check-in system</p>
+
+        <div class="input-section">
+            <label for="baseUrl">Deployed Application URL</label>
+            <input
+                type="text"
+                id="baseUrl"
+                value="https://your-deployed-app.com"
+                placeholder="https://your-app.com"
+            >
+            <p class="help-text">Enter your deployed application URL (without trailing slash)</p>
+            <button onclick="generateQRCodes()">🔄 Generate QR Codes</button>
+        </div>
+
+        <div class="instructions">
+            <h3>📋 Instructions</h3>
+            <ol>
+                <li>Update the "Deployed Application URL" above with your actual website URL</li>
+                <li>Click "Generate QR Codes" to create QR codes for all warehouses</li>
+                <li>Right-click each QR code and "Save Image As..." or use the download buttons</li>
+                <li>Print the QR codes (recommended size: 10cm x 10cm or larger)</li>
+                <li>Laminate for durability and place at respective warehouse locations</li>
+                <li>Test by scanning with your phone's camera app</li>
+            </ol>
+        </div>
+
+        <div id="qrContainer" class="qr-grid"></div>
+    </div>
+
+    <script>
+        const warehouses = ['W202', 'A185', 'A68', 'A101', 'F53'];
+
+        function generateQRCodes() {
+            const baseUrl = document.getElementById('baseUrl').value.trim();
+            const container = document.getElementById('qrContainer');
+
+            // Clear existing QR codes
+            container.innerHTML = '';
+
+            // Validate URL
+            if (!baseUrl || baseUrl === 'https://your-deployed-app.com') {
+                alert('Please update the URL with your actual deployed application URL');
+                return;
+            }
+
+            // Generate QR code for each warehouse
+            warehouses.forEach(warehouse => {
+                const url = `${baseUrl}/?warehouse=${warehouse}`;
+
+                // Create card
+                const card = document.createElement('div');
+                card.className = 'qr-card';
+
+                // Title
+                const title = document.createElement('div');
+                title.className = 'qr-title';
+                title.textContent = `Warehouse ${warehouse}`;
+                card.appendChild(title);
+
+                // QR code container
+                const qrDiv = document.createElement('div');
+                qrDiv.className = 'qr-code';
+                qrDiv.id = `qr-${warehouse}`;
+                card.appendChild(qrDiv);
+
+                // URL display
+                const urlDiv = document.createElement('div');
+                urlDiv.className = 'qr-url';
+                urlDiv.textContent = url;
+                card.appendChild(urlDiv);
+
+                // Download button
+                const downloadBtn = document.createElement('button');
+                downloadBtn.className = 'download-btn';
+                downloadBtn.textContent = `⬇️ Download ${warehouse}`;
+                downloadBtn.onclick = () => downloadQRCode(warehouse);
+                card.appendChild(downloadBtn);
+
+                container.appendChild(card);
+
+                // Generate QR code
+                new QRCode(qrDiv, {
+                    text: url,
+                    width: 256,
+                    height: 256,
+                    colorDark: "#000000",
+                    colorLight: "#ffffff",
+                    correctLevel: QRCode.CorrectLevel.H
+                });
+            });
+        }
+
+        function downloadQRCode(warehouse) {
+            const canvas = document.querySelector(`#qr-${warehouse} canvas`);
+            if (!canvas) {
+                alert('QR code not found. Please generate QR codes first.');
+                return;
+            }
+
+            // Convert canvas to blob and download
+            canvas.toBlob(blob => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `QR_Warehouse_${warehouse}.png`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            });
+        }
+
+        // Generate QR codes on page load
+        window.onload = () => {
+            // Don't auto-generate with default URL
+            console.log('Ready to generate QR codes. Please update the URL and click Generate.');
+        };
+    </script>
+</body>
+</html>
