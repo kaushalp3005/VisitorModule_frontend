@@ -16,6 +16,9 @@ export function VisitorImage({ src, alt, size = 'medium', className = '' }: Visi
   // Use src directly - it's already a full S3 URL from backend
   const imageUrl = src;
 
+  console.log(`[VisitorImage] src received:`, src);
+  console.log(`[VisitorImage] src type: ${typeof src}, truthy: ${!!src}, error: ${imageError}`);
+
   if (!imageUrl || imageError) {
     // Show placeholder avatar when no image or error
     const sizeClasses = {
@@ -64,13 +67,9 @@ export function VisitorImage({ src, alt, size = 'medium', className = '' }: Visi
           console.log('✅ Image loaded successfully:', imageUrl);
           setImageLoading(false);
         }}
-        onError={() => {
-          // Silently handle image load errors - placeholder will be shown
-          // Only log in development mode for debugging
-          if (process.env.NODE_ENV === 'development') {
-            console.warn('⚠️ Image failed to load (showing placeholder)');
-          }
-
+        onError={(e) => {
+          console.error(`[VisitorImage] ❌ Image FAILED to load. URL: ${imageUrl}`);
+          console.error(`[VisitorImage] Error event:`, e);
           setImageError(true);
           setImageLoading(false);
         }}

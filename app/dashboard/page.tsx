@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AppHeader } from '@/components/app-header';
@@ -20,6 +20,7 @@ export default function DashboardPage() {
   const [requests, setRequests] = useState<any[]>([]);
   const [allRequests, setAllRequests] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Fetch visitor requests for the logged-in user
   const fetchRequests = useCallback(async () => {
@@ -124,8 +125,10 @@ export default function DashboardPage() {
         };
       });
 
-      console.log(`[Dashboard] Fetched ${mappedRequests.length} visitors. Statuses:`, 
+      console.log(`[Dashboard] Fetched ${mappedRequests.length} visitors. Statuses:`,
         mappedRequests.map((r: any) => ({ id: r.id, status: r.status })));
+      console.log(`[Dashboard] Visitor image URLs:`,
+        mappedRequests.map((r: any) => ({ id: r.id, imageUrl: r.imageUrl })));
       setRequests(mappedRequests);
     } catch (error) {
       console.error('[Dashboard] Error fetching user requests:', error);
@@ -344,21 +347,28 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]); // Only re-fetch when user changes, not when functions change
 
-  // Poll for status updates every 10 seconds if there are pending requests
+  // Poll for status updates every 10 seconds (only when user is logged in)
+  // Note: We don't depend on requests/allRequests to avoid infinite loops
   useEffect(() => {
-    if (!user) return;
-
-    const pendingCount = requests.filter(r => r.status === 'pending').length;
-    const allPendingCount = allRequests.filter(r => r.status === 'pending').length;
-    
-    if (pendingCount === 0 && allPendingCount === 0) {
-      console.log('[Dashboard] No pending requests, skipping polling');
+    if (!user) {
+      // Clear polling if user logs out
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
       return;
     }
 
-    console.log(`[Dashboard] Starting polling - ${pendingCount} pending (user), ${allPendingCount} pending (all)`);
-    
-    const interval = setInterval(() => {
+    // Clear any existing interval first
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+
+    // Start polling - fetch updates every 10 seconds
+    // The polling will continue until user logs out or component unmounts
+    console.log('[Dashboard] Starting polling for status updates...');
+    pollingIntervalRef.current = setInterval(() => {
       console.log('[Dashboard] Polling for status updates...');
       fetchRequests();
       if (user.superuser) {
@@ -367,12 +377,15 @@ export default function DashboardPage() {
     }, 10000); // Poll every 10 seconds
 
     return () => {
-      console.log('[Dashboard] Stopping polling');
-      clearInterval(interval);
+      if (pollingIntervalRef.current) {
+        console.log('[Dashboard] Stopping polling');
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
     };
-    // Only depend on user and pending counts, not the full arrays to avoid recreating interval
+    // Only depend on user - fetchRequests/fetchAllRequests are stable callbacks
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, requests.length, allRequests.length]);
+  }, [user]);
 
   // All hooks must be called before any conditional returns
   const filteredRequests = useMemo(() => {

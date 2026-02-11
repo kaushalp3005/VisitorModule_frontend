@@ -32,6 +32,14 @@ interface HealthDeclaration {
   hygieneNormsAck: boolean;
 }
 
+interface ElectronicsItem {
+  type: string;
+  brand: string;
+  serialNumber: string;
+  quantity: number;
+  photo?: string;
+}
+
 interface VisitorFormData {
   name: string;
   mobileNumber: string;
@@ -42,6 +50,8 @@ interface VisitorFormData {
   selfie?: string;
   warehouse?: string;
   healthDeclaration?: HealthDeclaration;
+  carryingElectronics: boolean;
+  electronicsItems: ElectronicsItem[];
 }
 
 export default function VisitorCheckInPage() {
@@ -106,6 +116,27 @@ export default function VisitorCheckInPage() {
         formDataToSend.append('health_declaration', JSON.stringify(formData.healthDeclaration));
       }
 
+      // Add electronics data
+      formDataToSend.append('carrying_electronics', formData.carryingElectronics.toString());
+      if (formData.carryingElectronics && formData.electronicsItems.length > 0) {
+        formDataToSend.append('electronics_items', JSON.stringify(formData.electronicsItems));
+        
+        // Add electronics photos as separate files
+        formData.electronicsItems.forEach((item, index) => {
+          if (item.photo) {
+            // Convert base64 to blob
+            const electronicsBase64Data = item.photo.split(',')[1];
+            const electronicsBytes = atob(electronicsBase64Data);
+            const electronicsArray = new Array(electronicsBytes.length);
+            for (let i = 0; i < electronicsBytes.length; i++) {
+              electronicsArray[i] = electronicsBytes.charCodeAt(i);
+            }
+            const electronicsBlob = new Blob([new Uint8Array(electronicsArray)], { type: 'image/jpeg' });
+            formDataToSend.append(`electronics_photo_${index}`, electronicsBlob, `electronics_${index}.jpg`);
+          }
+        });
+      }
+
       console.log('Submitting to:', `${API_ENDPOINTS.visitors}/check-in-with-image`);
 
       const response = await fetch(`${API_ENDPOINTS.visitors}/check-in-with-image`, {
@@ -123,6 +154,8 @@ export default function VisitorCheckInPage() {
 
       const data = await response.json();
       console.log('API Response:', data);
+      console.log('[Check-in] img_url from API:', data.visitor?.img_url);
+      console.log('[Check-in] image_url from API:', data.visitor?.image_url);
 
       // Fetch approver details to get phone number
       let approverName = data.visitor.person_to_meet;
@@ -306,7 +339,7 @@ export default function VisitorCheckInPage() {
                       </p>
                     </div>
                     <Link href="/status">
-                      <Button className="bg-white text-blue-600 hover:bg-blue-50 h-10 px-5 text-sm font-semibold shadow-md whitespace-nowrap">
+                      <Button className="bg-white text-[#7a2e2e] hover:bg-[#f5e6e6] h-10 px-5 text-sm font-semibold shadow-md whitespace-nowrap">
                         <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
@@ -381,13 +414,13 @@ export default function VisitorCheckInPage() {
                       using your mobile number or reference ID.
                     </p>
                     <Link href="/status">
-                      <Button className="w-full bg-blue-600 text-white hover:bg-blue-700 h-11 text-base mt-4">
+                      <Button className="w-full bg-[#7a2e2e] text-white hover:bg-[#8a3e3e] h-11 text-base mt-4">
                         Check Status
                       </Button>
                     </Link>
                     <button
                       onClick={() => setSubmittedData(null)}
-                      className="w-full text-sm text-blue-600 hover:text-blue-700 hover:underline mt-2"
+                      className="w-full text-sm text-[#7a2e2e] hover:text-[#8a3e3e] hover:underline mt-2"
                     >
                       Submit Another Request
                     </button>

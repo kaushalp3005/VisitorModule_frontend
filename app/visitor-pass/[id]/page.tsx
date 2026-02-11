@@ -56,6 +56,9 @@ export default function VisitorPassPage() {
 
       const data = await response.json();
       console.log(`[Visitor Pass] Fetched visitor ${data.id}: Status = "${data.status}"`);
+      console.log(`[Visitor Pass] img_url = "${data.img_url}"`);
+      console.log(`[Visitor Pass] image_url = "${data.image_url}"`);
+      console.log(`[Visitor Pass] Full visitor data:`, JSON.stringify(data, null, 2));
       setVisitor(data);
 
       // Fetch approver name

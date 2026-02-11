@@ -10,7 +10,7 @@ import { Toast, useToast } from '@/components/toast';
 import { useAuth } from '@/lib/auth-store';
 import { API_ENDPOINTS } from '@/lib/api-config';
 import { QrScanner } from '@/components/qr-scanner';
-import { ScanQrCode, RefreshCw } from 'lucide-react';
+import { ScanQrCode, RefreshCw, Trash2 } from 'lucide-react';
 
 interface ICard {
   id: number;
@@ -34,6 +34,7 @@ interface Visitor {
   reasonForVisit: string;
   status: string;
   submittedAt: string;
+  updatedAt: string;
   visitorNumber?: string;
   rawId: number;
   assignedCard?: string | null;
@@ -50,6 +51,8 @@ export default function AdminPage() {
   const [isAssigning, setIsAssigning] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Fetch all approved visitors
   const fetchApprovedVisitors = useCallback(async () => {
@@ -159,6 +162,7 @@ export default function AdminPage() {
         reasonForVisit: visitor.reason_to_visit,
         status: 'approved',
         submittedAt: visitor.check_in_time,
+        updatedAt: visitor.updated_at,
         visitorNumber: visitor.id.toString(),
         rawId: visitor.id,
         assignedCard: null, // Will be updated when icards are fetched
@@ -342,6 +346,60 @@ export default function AdminPage() {
     }
   };
 
+  // Delete visitor
+  const handleDeleteVisitor = async () => {
+    if (!selectedVisitor || !user) return;
+
+    setIsDeleting(true);
+    try {
+      const response = await fetch(`${API_ENDPOINTS.visitors}/${selectedVisitor.rawId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${user.access_token}`,
+          'accept': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        let errorData: any = {};
+        let errorMessage = 'Failed to delete visitor';
+        try {
+          const errorText = await response.text();
+          try {
+            errorData = JSON.parse(errorText);
+            errorMessage = errorData.detail || errorData.message || errorMessage;
+          } catch {
+            errorMessage = errorText || errorMessage;
+          }
+        } catch (e) {
+          console.error('Error parsing error response:', e);
+        }
+        console.error('Delete visitor error:', errorData);
+        throw new Error(errorMessage);
+      }
+
+      // Remove the visitor from the local state
+      setApprovedVisitors((prevVisitors) =>
+        prevVisitors.filter((visitor) => visitor.id !== selectedVisitor.id)
+      );
+
+      // Clear selection
+      setSelectedVisitor(null);
+      setShowDeleteModal(false);
+
+      addToast('Visitor deleted successfully', 'success');
+      
+      // Refresh data to ensure consistency
+      await fetchApprovedVisitors();
+      await fetchICards();
+    } catch (error) {
+      console.error('Error deleting visitor:', error);
+      addToast(error instanceof Error ? error.message : 'Failed to delete visitor', 'error');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   // Release ICard and update visitor checkout
   const handleReleaseCard = async (cardId: number) => {
     if (!user) return;
@@ -413,7 +471,35 @@ export default function AdminPage() {
     setShowScanner(false);
 
     try {
-      // Try to parse as JSON first (if QR contains structured data)
+      // Check if this is a visitor appointment QR code (starts with APT-)
+      if (scannedData.startsWith('APT-')) {
+        console.log('👤 Processing visitor appointment QR code');
+        
+        // Find the visitor by appointment ID or visitor number
+        const visitor = approvedVisitors.find(v => 
+          v.visitorNumber === scannedData || 
+          v.id.includes(scannedData.split('-')[1]) ||
+          scannedData.includes(v.visitorNumber || '')
+        );
+
+        if (visitor) {
+          console.log('✅ Found visitor:', visitor.name);
+          setSelectedVisitor(visitor);
+          
+          // Check if visitor already has a card assigned
+          if (visitor.assignedCard) {
+            addToast(`Visitor ${visitor.name} already has an ICard assigned: ${visitor.assignedCard}. Cannot assign another card.`, 'error');
+          } else {
+            addToast(`Visitor ${visitor.name} selected. You can now assign an available ICard.`, 'success');
+          }
+        } else {
+          console.log('❌ Visitor not found for QR code:', scannedData);
+          addToast(`Visitor not found for QR code: "${scannedData}". Make sure the visitor is approved.`, 'error');
+        }
+        return;
+      }
+
+      // Handle card release QR code (existing functionality)
       let cardId: number;
 
       try {
@@ -427,7 +513,7 @@ export default function AdminPage() {
       }
 
       if (isNaN(cardId)) {
-        console.error('❌ Invalid card ID:', scannedData);
+        console.error('❌ Invalid QR code format:', scannedData);
         addToast(`Invalid QR code format: "${scannedData}"`, 'error');
         return;
       }
@@ -624,13 +710,23 @@ export default function AdminPage() {
 
   const occupiedCards = icards.filter((card) => card.occ_status);
 
-  // Sort approved visitors: those with assigned cards first, then by name
+  // Sort approved visitors: those with assigned cards first, then by name for those with cards, and by most recent approval for those without cards
   const sortedApprovedVisitors = [...approvedVisitors].sort((a, b) => {
     // First, sort by whether they have an assigned card (with card first)
     if (a.assignedCard && !b.assignedCard) return -1;
     if (!a.assignedCard && b.assignedCard) return 1;
 
-    // If both have cards or both don't have cards, sort by name
+    // If both have cards, sort by name
+    if (a.assignedCard && b.assignedCard) {
+      return a.name.localeCompare(b.name);
+    }
+
+    // If both don't have cards, sort by most recent approval (updatedAt descending)
+    if (!a.assignedCard && !b.assignedCard) {
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    }
+
+    // Fallback to name sorting
     return a.name.localeCompare(b.name);
   });
 
@@ -686,7 +782,7 @@ export default function AdminPage() {
                 className="bg-primary text-primary-foreground hover:bg-primary/90 text-xs md:text-sm h-9 md:h-10"
               >
                 <ScanQrCode className="mr-1.5 md:mr-2 h-3 w-3 md:h-4 md:w-4" />
-                <span className="hidden sm:inline">Scan QR to Release Card</span>
+                <span className="hidden sm:inline">Scan QR Code</span>
                 <span className="sm:hidden">Scan QR</span>
               </Button>
             </div>
@@ -835,6 +931,18 @@ export default function AdminPage() {
                         )}
                       </div>
                     </div>
+                    
+                    {/* Delete Button */}
+                    <div className="mt-4 pt-4 border-t border-border">
+                      <Button
+                        onClick={() => setShowDeleteModal(true)}
+                        variant="outline"
+                        className="w-full border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 text-xs md:text-sm h-8 md:h-9"
+                      >
+                        <Trash2 className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                        Delete Visitor
+                      </Button>
+                    </div>
                   </div>
 
                   {/* Available ICards - Fully Responsive */}
@@ -931,6 +1039,37 @@ export default function AdminPage() {
           onScan={handleQrScan}
           onClose={() => setShowScanner(false)}
         />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && selectedVisitor && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-auto">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              Delete Visitor
+            </h3>
+            <p className="text-gray-600 mb-6">
+              Are you sure you want to delete visitor <strong>{selectedVisitor.name}</strong>? This action cannot be undone.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <Button
+                onClick={() => setShowDeleteModal(false)}
+                variant="outline"
+                disabled={isDeleting}
+                className="px-4 py-2"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleDeleteVisitor}
+                disabled={isDeleting}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white"
+              >
+                {isDeleting ? 'Deleting...' : 'Delete'}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

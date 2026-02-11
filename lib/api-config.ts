@@ -29,6 +29,10 @@ function getApiUrl(): string {
     if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
       return 'http://localhost:8000';
     }
+
+    // If running in production and no env var is set, fall back to Render backend.
+    // This prevents the app from accidentally calling localhost in production.
+    return 'https://visitor-management-backend-2hof.onrender.com';
   }
 
   // Default fallback

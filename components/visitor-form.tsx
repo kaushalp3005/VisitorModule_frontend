@@ -11,6 +11,14 @@ import { cn } from '@/lib/utils';
 import { API_ENDPOINTS } from '@/lib/api-config';
 import { HealthDeclarationForm, HealthDeclaration } from '@/components/health-declaration-form';
 
+interface ElectronicsItem {
+  type: string;
+  brand: string;
+  serialNumber?: string;
+  quantity: number;
+  photo?: string;
+}
+
 interface VisitorFormData {
   name: string;
   mobileNumber: string;
@@ -21,6 +29,8 @@ interface VisitorFormData {
   selfie?: string;
   warehouse?: string;
   healthDeclaration?: HealthDeclaration;
+  carryingElectronics: boolean;
+  electronicsItems: ElectronicsItem[];
 }
 
 interface VisitorFormProps {
@@ -92,6 +102,13 @@ const REASON_FOR_VISIT_OPTIONS = [
   "Other"
 ];
 
+const ELECTRONICS_ITEM_OPTIONS = [
+  "Laptop",
+  "Tablet",
+  "Mobile",
+  "Others"
+];
+
 export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: VisitorFormProps) {
   const [currentStep, setCurrentStep] = useState<1 | 2>(1);
   const [formData, setFormData] = useState<VisitorFormData>({
@@ -103,6 +120,8 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
     reasonForVisit: [], // Changed to array for multiple selections
     selfie: undefined,
     warehouse: warehouseName || '',
+    carryingElectronics: false,
+    electronicsItems: [],
   });
 
   const [healthDeclaration, setHealthDeclaration] = useState<HealthDeclaration>({
@@ -135,9 +154,16 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
   const [customReason, setCustomReason] = useState('');
   const [approvers, setApprovers] = useState<PersonToMeet[]>([]);
   const [loadingApprovers, setLoadingApprovers] = useState(true);
+  const [electronicsPhotoDialogOpen, setElectronicsPhotoDialogOpen] = useState(false);
+  const [currentElectronicsIndex, setCurrentElectronicsIndex] = useState(0);
+  const [shouldStartElectronicsCamera, setShouldStartElectronicsCamera] = useState(false);
+  const [isElectronicsCameraActive, setIsElectronicsCameraActive] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const electronicsVideoRef = useRef<HTMLVideoElement>(null);
+  const electronicsCanvasRef = useRef<HTMLCanvasElement>(null);
+  const electronicsStreamRef = useRef<MediaStream | null>(null);
 
   // Update warehouse when warehouseName prop changes
   useEffect(() => {
@@ -225,6 +251,37 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
     }
   }, [shouldStartCamera, isDialogOpen]);
 
+  // Start electronics camera when dialog is open and video element is ready
+  useEffect(() => {
+    if (shouldStartElectronicsCamera && electronicsPhotoDialogOpen) {
+      const timeoutId = setTimeout(async () => {
+        if (electronicsVideoRef.current) {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+              audio: false
+            });
+
+            if (electronicsVideoRef.current) {
+              electronicsVideoRef.current.srcObject = stream;
+              electronicsStreamRef.current = stream;
+              setIsElectronicsCameraActive(true);
+              setShouldStartElectronicsCamera(false);
+            }
+          } catch (error) {
+            console.error('Error accessing electronics camera:', error);
+            alert('Unable to access camera. Please allow camera permissions.');
+            setElectronicsPhotoDialogOpen(false);
+            setIsElectronicsCameraActive(false);
+            setShouldStartElectronicsCamera(false);
+          }
+        }
+      }, 300);
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [shouldStartElectronicsCamera, electronicsPhotoDialogOpen]);
+
   const validateForm = (): boolean => {
     const newErrors: FormErrors = {};
 
@@ -262,6 +319,22 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
 
     if (!formData.selfie) {
       newErrors.selfie = 'Selfie is required';
+    }
+
+    // Electronics validation
+    if (formData.carryingElectronics) {
+      if (formData.electronicsItems.length === 0) {
+        newErrors.electronicsItems = 'Please add at least one electronic item';
+      } else {
+        // Validate each electronics item
+        for (let i = 0; i < formData.electronicsItems.length; i++) {
+          const item = formData.electronicsItems[i];
+          if (!item.type || !item.brand || item.quantity < 1) {
+            newErrors.electronicsItems = `Please fill required fields for electronic item ${i + 1}`;
+            break;
+          }
+        }
+      }
     }
 
     setErrors(newErrors);
@@ -344,6 +417,59 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
     }
   };
 
+  const handleElectronicsPhotoDialogOpenChange = (open: boolean) => {
+    setElectronicsPhotoDialogOpen(open);
+    if (!open) {
+      stopElectronicsCamera();
+      setShouldStartElectronicsCamera(false);
+    }
+  };
+
+  const stopElectronicsCamera = () => {
+    if (electronicsStreamRef.current) {
+      electronicsStreamRef.current.getTracks().forEach(track => track.stop());
+      electronicsStreamRef.current = null;
+    }
+    setIsElectronicsCameraActive(false);
+  };
+
+  const captureElectronicsPhoto = () => {
+    if (electronicsVideoRef.current && electronicsCanvasRef.current) {
+      const video = electronicsVideoRef.current;
+      const canvas = electronicsCanvasRef.current;
+      const context = canvas.getContext('2d');
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      if (context) {
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = canvas.toDataURL('image/jpeg', 0.8);
+
+        setFormData((prev) => {
+          const updatedItems = [...prev.electronicsItems];
+          updatedItems[currentElectronicsIndex] = {
+            ...updatedItems[currentElectronicsIndex],
+            photo: imageData
+          };
+          return {
+            ...prev,
+            electronicsItems: updatedItems
+          };
+        });
+
+        setElectronicsPhotoDialogOpen(false);
+        stopElectronicsCamera();
+      }
+    }
+  };
+
+  const startElectronicsCamera = (index: number) => {
+    setCurrentElectronicsIndex(index);
+    setElectronicsPhotoDialogOpen(true);
+    setShouldStartElectronicsCamera(true);
+  };
+
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => {
@@ -418,6 +544,61 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
     }
   };
 
+  const handleElectronicsChange = (value: boolean) => {
+    setFormData((prev) => ({
+      ...prev,
+      carryingElectronics: value,
+      electronicsItems: value 
+        ? (prev.electronicsItems.length === 0 
+            ? [{ type: '', brand: '', serialNumber: '', quantity: 1, photo: undefined }] 
+            : prev.electronicsItems)
+        : [],
+    }));
+    if (errors.electronicsItems) {
+      setErrors((prev) => ({
+        ...prev,
+        electronicsItems: undefined,
+      }));
+    }
+  };
+
+  const addElectronicsItem = () => {
+    setFormData((prev) => ({
+      ...prev,
+      electronicsItems: [
+        ...prev.electronicsItems,
+        { type: '', brand: '', serialNumber: '', quantity: 1, photo: undefined }
+      ]
+    }));
+  };
+
+  const removeElectronicsItem = (index: number) => {
+    setFormData((prev) => ({
+      ...prev,
+      electronicsItems: prev.electronicsItems.filter((_, i) => i !== index)
+    }));
+  };
+
+  const updateElectronicsItem = (index: number, field: keyof ElectronicsItem, value: string | number) => {
+    setFormData((prev) => {
+      const updatedItems = [...prev.electronicsItems];
+      updatedItems[index] = {
+        ...updatedItems[index],
+        [field]: value
+      };
+      return {
+        ...prev,
+        electronicsItems: updatedItems
+      };
+    });
+    if (errors.electronicsItems) {
+      setErrors((prev) => ({
+        ...prev,
+        electronicsItems: undefined,
+      }));
+    }
+  };
+
   const handleNextStep = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -462,6 +643,8 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
         reasonForVisit: [],
         selfie: undefined,
         warehouse: warehouseName || '',
+        carryingElectronics: false,
+        electronicsItems: [],
       });
       setHealthDeclaration({
         hasRespiratoryAilment: false,
@@ -803,6 +986,169 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
         </div>
       )}
 
+      {/* Electronics Carrying Section */}
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">
+          Are you carrying anything like a Laptop/tablet etc?
+        </label>
+        <div className="flex gap-4 mt-2">
+          <button
+            type="button"
+            onClick={() => handleElectronicsChange(true)}
+            className={`px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+              formData.carryingElectronics
+                ? 'bg-blue-500 text-white border-blue-500'
+                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+            }`}
+          >
+            Yes
+          </button>
+          <button
+            type="button"
+            onClick={() => handleElectronicsChange(false)}
+            className={`px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+              !formData.carryingElectronics
+                ? 'bg-blue-500 text-white border-blue-500'
+                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+            }`}
+          >
+            No
+          </button>
+        </div>
+        
+        {formData.carryingElectronics && (
+          <div className="mt-4 space-y-4">
+            {formData.electronicsItems.map((item, index) => (
+              <div key={index} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <div className="flex justify-between items-center mb-3">
+                  <h4 className="text-sm font-semibold text-gray-700">
+                    Electronic Item {index + 1}
+                  </h4>
+                  {formData.electronicsItems.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeElectronicsItem(index)}
+                      className="text-red-600 hover:text-red-800 text-xs font-medium"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Item Type *
+                    </label>
+                    <select
+                      value={item.type}
+                      onChange={(e) => updateElectronicsItem(index, 'type', e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Select item type</option>
+                      {ELECTRONICS_ITEM_OPTIONS.map((type) => (
+                        <option key={type} value={type}>
+                          {type}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Brand Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={item.brand}
+                      onChange={(e) => updateElectronicsItem(index, 'brand', e.target.value)}
+                      placeholder="e.g., Apple, Dell, Samsung"
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Serial Number
+                    </label>
+                    <input
+                      type="text"
+                      value={item.serialNumber}
+                      onChange={(e) => updateElectronicsItem(index, 'serialNumber', e.target.value)}
+                      placeholder="Enter serial number"
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Quantity *
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={item.quantity}
+                      onChange={(e) => updateElectronicsItem(index, 'quantity', parseInt(e.target.value) || 1)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+                
+                <div className="mt-3">
+                  <label className="block text-xs font-medium text-gray-600 mb-2">
+                    Device Photo
+                  </label>
+                  {item.photo ? (
+                    <div className="relative">
+                      <img
+                        src={item.photo}
+                        alt={`${item.type} photo`}
+                        className="w-32 h-24 object-cover rounded-lg border border-gray-300"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => updateElectronicsItem(index, 'photo', '')}
+                        className="absolute top-1 right-1 p-1 rounded-full bg-red-500 text-white hover:bg-red-600 text-xs"
+                      >
+                        <XIcon className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      onClick={() => startElectronicsCamera(index)}
+                      variant="outline"
+                      className="text-xs h-8 px-3"
+                    >
+                      <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      Take Photo
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+            
+            <Button
+              type="button"
+              onClick={addElectronicsItem}
+              variant="outline"
+              className="w-full h-10 text-sm border-dashed border-gray-400 hover:border-gray-600"
+            >
+              + Add Another Item
+            </Button>
+          </div>
+        )}
+        
+        {errors.electronicsItems && (
+          <p className="mt-1 text-xs text-red-600">
+            {errors.electronicsItems}
+          </p>
+        )}
+      </div>
+
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">
           Selfie <span className="text-red-500">*</span>
@@ -811,7 +1157,7 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
         <Button
           type="button"
           onClick={startCamera}
-          className="w-full bg-blue-600 text-white hover:bg-blue-700 h-12 text-base font-semibold shadow-md hover:shadow-lg transition-all"
+          className="w-full bg-[#7a2e2e] text-white hover:bg-[#8a3e3e] h-12 text-base font-semibold shadow-md hover:shadow-lg transition-all"
         >
           <svg
             className="w-4 h-4 sm:w-5 sm:h-5 mr-1.5 sm:mr-2"
@@ -931,11 +1277,60 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
         )}
       </div>
 
+      {/* Electronics Photo Dialog */}
+      <Dialog open={electronicsPhotoDialogOpen} onOpenChange={handleElectronicsPhotoDialogOpenChange}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Take Photo of Electronic Device</DialogTitle>
+            <DialogDescription>
+              Position your device in the camera frame and click Capture Photo when ready.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="relative rounded-lg overflow-hidden bg-black aspect-video w-full">
+              <video
+                ref={electronicsVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+                style={{ display: isElectronicsCameraActive ? 'block' : 'none' }}
+              />
+              {!isElectronicsCameraActive && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <p className="text-white text-sm">Starting camera...</p>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3">
+              <Button
+                type="button"
+                onClick={captureElectronicsPhoto}
+                disabled={!isElectronicsCameraActive}
+                className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              >
+                Capture Photo
+              </Button>
+              <Button
+                type="button"
+                onClick={() => setElectronicsPhotoDialogOpen(false)}
+                variant="outline"
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <canvas ref={electronicsCanvasRef} className="hidden" />
+
       <div className="flex gap-3 pt-6 border-t border-gray-200">
         <Button
           type="submit"
           disabled={submitting || isLoading}
-          className="flex-1 bg-blue-600 text-white hover:bg-blue-700 h-12 text-base font-semibold shadow-md hover:shadow-lg transition-all"
+          className="flex-1 bg-[#7a2e2e] text-white hover:bg-[#8a3e3e] h-12 text-base font-semibold shadow-md hover:shadow-lg transition-all"
         >
           Next: Health Declaration →
         </Button>

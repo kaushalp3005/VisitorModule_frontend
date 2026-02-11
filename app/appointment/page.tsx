@@ -237,10 +237,14 @@ export default function AppointmentPage() {
       if (trimmedData.startsWith('APT-')) {
         console.log('📅 Detected appointment QR code:', trimmedData);
         const appointment = await fetchAppointmentByQr(trimmedData);
-        
+
         if (appointment) {
           setScannedVisitor(appointment);
-          addToast('Appointment QR code scanned successfully!', 'success');
+          if (appointment.assignedCard) {
+            addToast(`Visitor already has ICard "${appointment.assignedCard}" assigned.`, 'error');
+          } else {
+            addToast('Appointment QR code scanned successfully!', 'success');
+          }
         }
         return;
       }
@@ -269,7 +273,11 @@ export default function AppointmentPage() {
       
       if (visitor) {
         setScannedVisitor(visitor);
-        addToast('Visitor details loaded successfully', 'success');
+        if (visitor.assignedCard) {
+          addToast(`Visitor already has ICard "${visitor.assignedCard}" assigned.`, 'error');
+        } else {
+          addToast('Visitor details loaded successfully', 'success');
+        }
         // Refresh cards to show current status
         await fetchICards();
       }
@@ -582,7 +590,7 @@ export default function AppointmentPage() {
               <div className="flex gap-2">
                 <Button
                   onClick={() => window.open(googleFormUrl, '_blank')}
-                  className="bg-green-600 text-white hover:bg-green-700 text-xs md:text-sm h-9 md:h-10"
+                  className="bg-[#7a2e2e] text-white hover:bg-[#8a3e3e] text-xs md:text-sm h-9 md:h-10"
                 >
                   <FileText className="mr-1.5 md:mr-2 h-3 w-3 md:h-4 md:w-4" />
                   <span className="hidden sm:inline">Book Appointment</span>
@@ -766,10 +774,10 @@ export default function AppointmentPage() {
                         <Button
                           size="sm"
                           onClick={() => handleAssignCard(card.id)}
-                          disabled={isAssigning || !scannedVisitor}
+                          disabled={isAssigning || !scannedVisitor || !!scannedVisitor?.assignedCard}
                           className="bg-primary text-primary-foreground hover:bg-primary/90 text-[10px] sm:text-xs md:text-sm h-7 sm:h-7 md:h-8 px-2 sm:px-2.5 md:px-3 shrink-0 touch-manipulation disabled:opacity-50"
                         >
-                          {isAssigning ? 'Assigning...' : 'Assign'}
+                          {isAssigning ? 'Assigning...' : scannedVisitor?.assignedCard ? 'Already Assigned' : 'Assign'}
                         </Button>
                       </div>
                     ))}

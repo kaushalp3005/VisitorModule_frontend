@@ -13,7 +13,7 @@ interface QrScannerProps {
 export function QrScanner({ onScan, onClose }: QrScannerProps) {
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const isMountedRef = useRef(true);
-  const hasScannedRef = useRef(false);
+  const hasProcessedRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [scanSuccess, setScanSuccess] = useState(false);
@@ -82,31 +82,27 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
         },
         // Success callback
         (decodedText) => {
+          // Once a QR has been processed, ignore all further detections
+          if (hasProcessedRef.current) return;
+
           console.log('📸 QR Code detected:', decodedText);
-
-          // Prevent multiple rapid scans
-          if (hasScannedRef.current) {
-            console.log('⚠️ Already processing a scan, skipping');
-            return;
-          }
-
-          hasScannedRef.current = true;
+          hasProcessedRef.current = true;
 
           // Play beep sound
           try {
             const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
             const oscillator = audioContext.createOscillator();
             const gainNode = audioContext.createGain();
-            
+
             oscillator.connect(gainNode);
             gainNode.connect(audioContext.destination);
-            
+
             oscillator.frequency.value = 1200;
             oscillator.type = 'sine';
-            
+
             gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
             gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
-            
+
             oscillator.start(audioContext.currentTime);
             oscillator.stop(audioContext.currentTime + 0.2);
           } catch (audioErr) {
@@ -119,13 +115,12 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
           // Call parent callback
           onScan(decodedText);
 
-          // Reset for next scan after brief delay
+          // Automatically close scanner after successful scan
           setTimeout(() => {
             if (isMountedRef.current) {
-              hasScannedRef.current = false;
-              setScanSuccess(false);
+              handleClose();
             }
-          }, 1000);
+          }, 500);
         },
         // Error callback (this fires continuously when no QR is found - that's normal)
         undefined
@@ -240,30 +235,27 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
         },
         // Success callback
         (decodedText) => {
+          // Once a QR has been processed, ignore all further detections
+          if (hasProcessedRef.current) return;
+
           console.log('📸 QR Code detected:', decodedText);
-
-          if (hasScannedRef.current) {
-            console.log('⚠️ Already processing a scan, skipping');
-            return;
-          }
-
-          hasScannedRef.current = true;
+          hasProcessedRef.current = true;
 
           // Play beep sound
           try {
             const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
             const oscillator = audioContext.createOscillator();
             const gainNode = audioContext.createGain();
-            
+
             oscillator.connect(gainNode);
             gainNode.connect(audioContext.destination);
-            
+
             oscillator.frequency.value = 1200;
             oscillator.type = 'sine';
-            
+
             gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
             gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
-            
+
             oscillator.start(audioContext.currentTime);
             oscillator.stop(audioContext.currentTime + 0.2);
           } catch (audioErr) {
@@ -273,12 +265,12 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
           setScanSuccess(true);
           onScan(decodedText);
 
+          // Automatically close scanner after successful scan
           setTimeout(() => {
             if (isMountedRef.current) {
-              hasScannedRef.current = false;
-              setScanSuccess(false);
+              handleClose();
             }
-          }, 1000);
+          }, 500);
         },
         undefined
       );
@@ -411,7 +403,7 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
         <div className="flex items-center justify-between px-3 py-2.5 sm:px-4 sm:py-3 md:px-6 md:py-4 border-b border-gray-200 flex-shrink-0">
           <div className="flex-1 min-w-0 pr-2">
             <h2 className="text-base sm:text-lg md:text-xl font-bold text-gray-900 truncate">Scan QR Code</h2>
-            <p className="text-[10px] sm:text-xs md:text-sm text-gray-500 mt-0.5 truncate">Scan ICard to release</p>
+            <p className="text-[10px] sm:text-xs md:text-sm text-gray-500 mt-0.5 truncate">Scan visitor or ICard QR code</p>
           </div>
           <Button
             variant="ghost"
