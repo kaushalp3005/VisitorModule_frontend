@@ -137,25 +137,17 @@ export default function VisitorCheckInPage() {
         });
       }
 
-      console.log('Submitting to:', `${API_ENDPOINTS.visitors}/check-in-with-image`);
-
       const response = await fetch(`${API_ENDPOINTS.visitors}/check-in-with-image`, {
         method: 'POST',
         body: formDataToSend,
       });
 
-      console.log('Response status:', response.status);
-
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('API Error:', errorText);
         throw new Error(`API request failed with status ${response.status}: ${errorText}`);
       }
 
       const data = await response.json();
-      console.log('API Response:', data);
-      console.log('[Check-in] img_url from API:', data.visitor?.img_url);
-      console.log('[Check-in] image_url from API:', data.visitor?.image_url);
 
       // Fetch approver details to get phone number
       let approverName = data.visitor.person_to_meet;
@@ -168,7 +160,6 @@ export default function VisitorCheckInPage() {
           approverPhone = approverData.ph_no || '';
         }
       } catch (error) {
-        console.error('Error fetching approver details:', error);
         // Use fallback name
         approverName = ['Yash – CEO', 'Sunil – CFO', 'Nitin – CBO', 'Reception / Front Desk'].find(
           (p) =>
@@ -210,8 +201,6 @@ export default function VisitorCheckInPage() {
       addToast(data.message || 'Visitor checked in successfully!', 'success');
       router.push(`/visitor-pass/${data.visitor.id}`);
     } catch (error) {
-      console.error('Check-in error:', error);
-
       // More detailed error message
       let errorMessage = 'Failed to submit request. ';
       if (error instanceof TypeError && error.message.includes('fetch')) {

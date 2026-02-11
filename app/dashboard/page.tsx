@@ -30,7 +30,6 @@ export default function DashboardPage() {
       setIsLoading(true);
 
       const url = `${API_ENDPOINTS.visitors}/`;
-      console.log('[Dashboard] Fetching user requests from:', url);
 
       // Fetch all visitors using the authenticated endpoint
       const response = await fetch(url, {
@@ -49,39 +48,20 @@ export default function DashboardPage() {
         }
 
         const errorText = await response.text();
-        console.error('Failed to fetch visitor requests:', {
-          status: response.status,
-          statusText: response.statusText,
-          body: errorText,
-        });
         throw new Error(`Failed to fetch visitor requests: ${response.status} ${response.statusText}`);
       }
 
       const data = await response.json();
 
       // Filter visitors where person_to_meet matches the logged-in user's username
-      console.log(`[Dashboard] Current user: ${user.username} (${user.name})`);
-      console.log(`[Dashboard] Total visitors from API: ${data.visitors.length}`);
-      
       const userVisitors = data.visitors.filter(
-        (visitor: any) => {
-          const isMatch = visitor.person_to_meet === user.username;
-          if (isMatch) {
-            console.log(`[Dashboard] Found visitor for ${user.username}: ${visitor.visitor_name} (ID: ${visitor.id})`);
-          }
-          return isMatch;
-        }
+        (visitor: any) => visitor.person_to_meet === user.username
       );
-      
-      console.log(`[Dashboard] Filtered visitors for ${user.username}: ${userVisitors.length}`);
 
       // Map the API response to match the expected format
       const mappedRequests = userVisitors.map((visitor: any) => {
         // Normalize status to lowercase for internal use
         const normalizedStatus = visitor.status.toLowerCase();
-        
-        // Console log for debugging
-        console.log(`[Dashboard] Visitor ${visitor.id}: Status from API = "${visitor.status}" (normalized: "${normalizedStatus}")`);
 
         // Check if this is an appointment request (from Google Form)
         const isAppointment = visitor.reason_to_visit?.startsWith('[APPOINTMENT]') || 
@@ -125,24 +105,10 @@ export default function DashboardPage() {
         };
       });
 
-      console.log(`[Dashboard] Fetched ${mappedRequests.length} visitors. Statuses:`,
-        mappedRequests.map((r: any) => ({ id: r.id, status: r.status })));
-      console.log(`[Dashboard] Visitor image URLs:`,
-        mappedRequests.map((r: any) => ({ id: r.id, imageUrl: r.imageUrl })));
       setRequests(mappedRequests);
     } catch (error) {
-      console.error('[Dashboard] Error fetching user requests:', error);
-      console.error('[Dashboard] Error details:', {
-        message: error instanceof Error ? error.message : String(error),
-        url: `${API_ENDPOINTS.visitors}/`,
-        apiUrl: API_ENDPOINTS.visitors,
-        hasToken: !!user.access_token,
-        username: user.username,
-      });
-      
       // Provide user-friendly error messages
       if (error instanceof TypeError && error.message.includes('fetch')) {
-        console.error('[Dashboard] Network error - Backend may not be running or database connection failed');
         addToast('Cannot connect to server. Please ensure the backend is running.', 'error');
       } else if (error instanceof Error) {
         addToast(error.message, 'error');
@@ -168,7 +134,6 @@ export default function DashboardPage() {
 
       do {
         const url = `${API_ENDPOINTS.visitors}/?page=${currentPage}&page_size=100`;
-        console.log(`[Dashboard] Fetching all requests (page ${currentPage}) from:`, url);
         
         const response = await fetch(url, {
           headers: {
@@ -186,11 +151,6 @@ export default function DashboardPage() {
           }
 
           const errorText = await response.text();
-          console.error('Failed to fetch all visitor requests:', {
-            status: response.status,
-            statusText: response.statusText,
-            body: errorText,
-          });
           throw new Error(`Failed to fetch all visitor requests: ${response.status} ${response.statusText}`);
         }
 
@@ -214,8 +174,7 @@ export default function DashboardPage() {
             try {
               // Skip if username looks like a test/dummy value
               if (username.toLowerCase().includes('john') && username.toLowerCase().includes('doe')) {
-                console.warn(`[Dashboard] Skipping test/dummy approver: ${username}`);
-                approverDetailsMap.set(username, username); // Use username as fallback
+                approverDetailsMap.set(username, username);
                 return;
               }
               
@@ -229,15 +188,12 @@ export default function DashboardPage() {
                 const approver = await response.json();
                 approverDetailsMap.set(username, approver.name);
               } else if (response.status === 404) {
-                // Approver not found - use username as fallback, don't log error for 404s
-                console.warn(`[Dashboard] Approver not found: ${username}, using username as fallback`);
                 approverDetailsMap.set(username, username);
               } else {
                 approverDetailsMap.set(username, username); // Fallback to username
               }
             } catch (error) {
-              console.error(`[Dashboard] Error fetching approver ${username}:`, error);
-              approverDetailsMap.set(username, username); // Fallback to username
+              approverDetailsMap.set(username, username);
             }
           })
       );
@@ -261,11 +217,6 @@ export default function DashboardPage() {
           } catch (e) {
             // Ignore parsing errors
           }
-        }
-
-        // Log appointment detection for debugging
-        if (isAppointment) {
-          console.log(`[Dashboard] Detected appointment request: ${visitor.id} - ${visitor.visitor_name} (${timeSlot || 'no time slot'})`);
         }
 
         return {
@@ -296,11 +247,8 @@ export default function DashboardPage() {
 
       setAllRequests(mappedRequests);
     } catch (error) {
-      console.error('Error fetching all requests:', error);
-      
       // Provide user-friendly error messages
       if (error instanceof TypeError && error.message.includes('fetch')) {
-        console.error('[Dashboard] Network error - Backend may not be running or database connection failed');
         addToast('Cannot connect to server. Please ensure the backend is running.', 'error');
       } else if (error instanceof Error) {
         addToast(error.message, 'error');
@@ -367,9 +315,7 @@ export default function DashboardPage() {
 
     // Start polling - fetch updates every 10 seconds
     // The polling will continue until user logs out or component unmounts
-    console.log('[Dashboard] Starting polling for status updates...');
     pollingIntervalRef.current = setInterval(() => {
-      console.log('[Dashboard] Polling for status updates...');
       fetchRequests();
       if (user.superuser) {
         fetchAllRequests();
@@ -378,7 +324,6 @@ export default function DashboardPage() {
 
     return () => {
       if (pollingIntervalRef.current) {
-        console.log('[Dashboard] Stopping polling');
         clearInterval(pollingIntervalRef.current);
         pollingIntervalRef.current = null;
       }
@@ -422,14 +367,6 @@ export default function DashboardPage() {
       const requestBody = { status: 'APPROVED' };
       const url = `${API_ENDPOINTS.visitors}/${request.rawId}/status`;
 
-      console.log('=== APPROVE REQUEST ===');
-      console.log('Request ID:', id);
-      console.log('Raw ID:', request.rawId);
-      console.log('URL:', url);
-      console.log('Request body:', requestBody);
-      console.log('Has token:', !!user.access_token);
-      console.log('Token preview:', user.access_token?.substring(0, 20) + '...');
-
       const response = await fetch(url, {
         method: 'PATCH',
         headers: {
@@ -441,28 +378,6 @@ export default function DashboardPage() {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Approve failed:', {
-          status: response.status,
-          statusText: response.statusText,
-          rawBody: errorText,
-        });
-        try {
-          const errorData = JSON.parse(errorText);
-          console.error('Parsed error:', errorData);
-          if (errorData.detail) {
-            console.error('Validation errors:', JSON.stringify(errorData.detail, null, 2));
-            errorData.detail.forEach((err: any, idx: number) => {
-              console.error(`Error ${idx}:`, {
-                location: err.loc,
-                message: err.msg,
-                type: err.type
-              });
-            });
-          }
-        } catch (e) {
-          console.error('Could not parse error as JSON');
-        }
         throw new Error('Failed to approve visitor');
       }
 
@@ -472,8 +387,6 @@ export default function DashboardPage() {
         fetchAllRequests(); // Refresh all requests for superusers
       }
     } catch (error) {
-      console.error('Error approving visitor:', error);
-
       // Provide more specific error messages
       if (error instanceof TypeError && error.message === 'Failed to fetch') {
         addToast('Cannot connect to server. Please ensure the backend is running.', 'error');
@@ -498,12 +411,6 @@ export default function DashboardPage() {
     try {
       const url = `${API_ENDPOINTS.visitors}/${request.rawId}/status`;
 
-      console.log('=== REJECT REQUEST ===');
-      console.log('Request ID:', id);
-      console.log('Raw ID:', request.rawId);
-      console.log('URL:', url);
-      console.log('Rejection reason:', reason);
-
       const response = await fetch(url, {
         method: 'PATCH',
         headers: {
@@ -517,12 +424,6 @@ export default function DashboardPage() {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Reject failed:', {
-          status: response.status,
-          statusText: response.statusText,
-          body: errorText,
-        });
         throw new Error('Failed to reject visitor');
       }
 
@@ -532,8 +433,6 @@ export default function DashboardPage() {
         fetchAllRequests(); // Refresh all requests for superusers
       }
     } catch (error) {
-      console.error('Error rejecting visitor:', error);
-
       // Provide more specific error messages
       if (error instanceof TypeError && error.message === 'Failed to fetch') {
         addToast('Cannot connect to server. Please ensure the backend is running.', 'error');
