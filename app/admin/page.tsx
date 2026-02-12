@@ -15,6 +15,7 @@ import { ScanQrCode, RefreshCw, CheckCircle } from 'lucide-react';
 interface ICard {
   id: number;
   card_name: string;
+  icard_name?: string | null;
   occ_status: boolean;
   occ_to: number | null;
   created_at: string;
@@ -501,7 +502,41 @@ export default function AdminPage() {
         return;
       }
 
-      // Handle card release QR code (existing functionality)
+      // Check if this is an ICard QR code (CU001, VE005, VI012 format)
+      const icardMatch = scannedData.trim().toUpperCase().match(/^(CU|VE|VI)\d{3}$/);
+      if (icardMatch) {
+        const cardName = scannedData.trim().toUpperCase();
+        console.log('🎫 ICard QR detected:', cardName);
+
+        try {
+          const response = await fetch(`${API_ENDPOINTS.icards}/scan-release`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${user!.access_token}`,
+              'accept': 'application/json',
+            },
+            body: JSON.stringify({ card_name: cardName }),
+          });
+
+          if (!response.ok) {
+            const errData = await response.json().catch(() => null);
+            throw new Error(errData?.detail || 'Failed to release card');
+          }
+
+          const result = await response.json();
+          const visitorInfo = result.visitor_name ? ` (Visitor: ${result.visitor_name})` : '';
+          addToast(`Card ${cardName} released & visit completed${visitorInfo}`, 'success');
+
+          // Refresh data
+          await Promise.all([fetchApprovedVisitors(), fetchICards()]);
+        } catch (err) {
+          addToast(err instanceof Error ? err.message : 'Failed to release card', 'error');
+        }
+        return;
+      }
+
+      // Handle card release QR code (legacy numeric ID format)
       let cardId: number;
 
       try {
@@ -620,7 +655,7 @@ export default function AdminPage() {
             const data = await response.json();
             return {
               visitorId: visitor.rawId,
-              cardName: data.card_name,
+              cardName: data.icard_name || data.card_name,
               cardId: data.card_id,
             };
           }
@@ -970,7 +1005,7 @@ export default function AdminPage() {
                             className="flex items-center justify-between p-2 sm:p-2.5 md:p-3 rounded-lg border border-border bg-muted/50 gap-2"
                           >
                             <div className="min-w-0 flex-1">
-                              <p className="text-xs sm:text-sm md:text-base font-medium text-foreground truncate">{card.card_name}</p>
+                              <p className="text-xs sm:text-sm md:text-base font-medium text-foreground truncate">{card.icard_name || card.card_name}</p>
                               <p className="text-[9px] sm:text-[10px] md:text-xs text-green-600">Available</p>
                             </div>
                             <Button
@@ -1001,7 +1036,7 @@ export default function AdminPage() {
                             className="flex items-center justify-between p-2 sm:p-2.5 md:p-3 rounded-lg border border-border bg-muted/50 gap-2"
                           >
                             <div className="min-w-0 flex-1">
-                              <p className="text-xs sm:text-sm md:text-base font-medium text-foreground truncate">{card.card_name}</p>
+                              <p className="text-xs sm:text-sm md:text-base font-medium text-foreground truncate">{card.icard_name || card.card_name}</p>
                               <p className="text-[9px] sm:text-[10px] md:text-xs text-red-600">
                                 Occupied (Visitor #{card.occ_to})
                               </p>

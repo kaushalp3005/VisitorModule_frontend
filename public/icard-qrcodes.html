@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ICard QR Codes - Candor Foods</title>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; color: #333; }
+
+    .header {
+      background: #1e3a5f;
+      color: white;
+      padding: 20px 40px;
+      text-align: center;
+    }
+    .header h1 { font-size: 24px; margin-bottom: 4px; }
+    .header p { font-size: 14px; opacity: 0.8; }
+
+    .section { padding: 20px 40px; }
+    .section h2 {
+      font-size: 20px;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid;
+    }
+    .section.customer h2 { border-color: #2563eb; color: #2563eb; }
+    .section.vendor h2 { border-color: #d97706; color: #d97706; }
+    .section.visitor h2 { border-color: #059669; color: #059669; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 16px;
+    }
+
+    .card {
+      background: white;
+      border: 2px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+      break-inside: avoid;
+    }
+    .section.customer .card { border-color: #93c5fd; }
+    .section.vendor .card { border-color: #fcd34d; }
+    .section.visitor .card { border-color: #6ee7b7; }
+
+    .card canvas { display: block; margin: 0 auto 8px; }
+    .card .label {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+    .card .type {
+      font-size: 11px;
+      text-transform: uppercase;
+      opacity: 0.6;
+      margin-top: 2px;
+    }
+
+    .no-print { text-align: center; padding: 20px; }
+    .no-print button {
+      background: #1e3a5f;
+      color: white;
+      border: none;
+      padding: 12px 32px;
+      font-size: 16px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .no-print button:hover { background: #2d4a6f; }
+
+    @media print {
+      body { background: white; }
+      .no-print { display: none; }
+      .header { padding: 10px 20px; }
+      .section { padding: 10px 20px; }
+      .grid { gap: 10px; }
+      .card { padding: 8px; border-width: 1px; }
+      .section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>ICard QR Codes</h1>
+    <p>Candor Foods - Visitor Management System</p>
+  </div>
+
+  <div class="no-print">
+    <button onclick="window.print()">Print All QR Codes</button>
+  </div>
+
+  <div class="section customer">
+    <h2>Customer Cards (CU001 - CU005)</h2>
+    <div class="grid" id="customer-grid"></div>
+  </div>
+
+  <div class="section vendor">
+    <h2>Vendor Cards (VE001 - VE020)</h2>
+    <div class="grid" id="vendor-grid"></div>
+  </div>
+
+  <div class="section visitor">
+    <h2>Visitor Cards (VI001 - VI020)</h2>
+    <div class="grid" id="visitor-grid"></div>
+  </div>
+
+  <script>
+    function generateCard(containerId, prefix, typeName, count) {
+      const grid = document.getElementById(containerId);
+      for (let i = 1; i <= count; i++) {
+        const cardName = prefix + String(i).padStart(3, '0');
+
+        const qr = qrcode(0, 'M');
+        qr.addData(cardName);
+        qr.make();
+
+        const div = document.createElement('div');
+        div.className = 'card';
+
+        // Create canvas for QR
+        const size = 140;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        const moduleCount = qr.getModuleCount();
+        const cellSize = size / moduleCount;
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, size, size);
+
+        ctx.fillStyle = '#000000';
+        for (let row = 0; row < moduleCount; row++) {
+          for (let col = 0; col < moduleCount; col++) {
+            if (qr.isDark(row, col)) {
+              ctx.fillRect(col * cellSize, row * cellSize, cellSize + 0.5, cellSize + 0.5);
+            }
+          }
+        }
+
+        div.appendChild(canvas);
+        div.innerHTML += `<div class="label">${cardName}</div><div class="type">${typeName}</div>`;
+        grid.appendChild(div);
+      }
+    }
+
+    generateCard('customer-grid', 'CU', 'Customer', 5);
+    generateCard('vendor-grid', 'VE', 'Vendor', 20);
+    generateCard('visitor-grid', 'VI', 'Visitor', 20);
+  </script>
+</body>
+</html>
