@@ -10,7 +10,7 @@ import { Toast, useToast } from '@/components/toast';
 import { useAuth } from '@/lib/auth-store';
 import { API_ENDPOINTS } from '@/lib/api-config';
 import { QrScanner } from '@/components/qr-scanner';
-import { ScanQrCode, RefreshCw, Trash2 } from 'lucide-react';
+import { ScanQrCode, RefreshCw, CheckCircle } from 'lucide-react';
 
 interface ICard {
   id: number;
@@ -51,8 +51,8 @@ export default function AdminPage() {
   const [isAssigning, setIsAssigning] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [showCompleteModal, setShowCompleteModal] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
 
   // Fetch all approved visitors
   const fetchApprovedVisitors = useCallback(async () => {
@@ -346,23 +346,25 @@ export default function AdminPage() {
     }
   };
 
-  // Delete visitor
-  const handleDeleteVisitor = async () => {
+  // Mark visitor as completed
+  const handleCompleteVisitor = async () => {
     if (!selectedVisitor || !user) return;
 
-    setIsDeleting(true);
+    setIsCompleting(true);
     try {
-      const response = await fetch(`${API_ENDPOINTS.visitors}/${selectedVisitor.rawId}`, {
-        method: 'DELETE',
+      const response = await fetch(`${API_ENDPOINTS.visitors}/${selectedVisitor.rawId}/status`, {
+        method: 'PATCH',
         headers: {
+          'Content-Type': 'application/json',
           'Authorization': `Bearer ${user.access_token}`,
           'accept': 'application/json',
         },
+        body: JSON.stringify({ status: 'COMPLETED' }),
       });
 
       if (!response.ok) {
         let errorData: any = {};
-        let errorMessage = 'Failed to delete visitor';
+        let errorMessage = 'Failed to mark visitor as completed';
         try {
           const errorText = await response.text();
           try {
@@ -374,29 +376,29 @@ export default function AdminPage() {
         } catch (e) {
           console.error('Error parsing error response:', e);
         }
-        console.error('Delete visitor error:', errorData);
+        console.error('Complete visitor error:', errorData);
         throw new Error(errorMessage);
       }
 
-      // Remove the visitor from the local state
+      // Remove the visitor from the approved list (they're no longer APPROVED)
       setApprovedVisitors((prevVisitors) =>
         prevVisitors.filter((visitor) => visitor.id !== selectedVisitor.id)
       );
 
       // Clear selection
       setSelectedVisitor(null);
-      setShowDeleteModal(false);
+      setShowCompleteModal(false);
 
-      addToast('Visitor deleted successfully', 'success');
-      
+      addToast('Visitor marked as completed', 'success');
+
       // Refresh data to ensure consistency
       await fetchApprovedVisitors();
       await fetchICards();
     } catch (error) {
-      console.error('Error deleting visitor:', error);
-      addToast(error instanceof Error ? error.message : 'Failed to delete visitor', 'error');
+      console.error('Error completing visitor:', error);
+      addToast(error instanceof Error ? error.message : 'Failed to mark visitor as completed', 'error');
     } finally {
-      setIsDeleting(false);
+      setIsCompleting(false);
     }
   };
 
@@ -932,15 +934,20 @@ export default function AdminPage() {
                       </div>
                     </div>
                     
-                    {/* Delete Button */}
+                    {/* Completed Button */}
                     <div className="mt-4 pt-4 border-t border-border">
                       <Button
-                        onClick={() => setShowDeleteModal(true)}
+                        onClick={() => setShowCompleteModal(true)}
                         variant="outline"
-                        className="w-full border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 text-xs md:text-sm h-8 md:h-9"
+                        disabled={!!selectedVisitor.assignedCard}
+                        className={`w-full text-xs md:text-sm h-8 md:h-9 ${
+                          selectedVisitor.assignedCard
+                            ? 'border-gray-200 text-gray-400 cursor-not-allowed'
+                            : 'border-green-300 text-green-700 hover:bg-green-50 hover:text-green-800'
+                        }`}
                       >
-                        <Trash2 className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-                        Delete Visitor
+                        <CheckCircle className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                        {selectedVisitor.assignedCard ? 'Release ICard First' : 'Completed'}
                       </Button>
                     </div>
                   </div>
@@ -1041,31 +1048,31 @@ export default function AdminPage() {
         />
       )}
 
-      {/* Delete Confirmation Modal */}
-      {showDeleteModal && selectedVisitor && (
+      {/* Complete Confirmation Modal */}
+      {showCompleteModal && selectedVisitor && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-auto">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Delete Visitor
+              Mark Visit as Completed
             </h3>
             <p className="text-gray-600 mb-6">
-              Are you sure you want to delete visitor <strong>{selectedVisitor.name}</strong>? This action cannot be undone.
+              Are you sure you want to mark visitor <strong>{selectedVisitor.name}</strong>'s visit as completed?
             </p>
             <div className="flex gap-3 justify-end">
               <Button
-                onClick={() => setShowDeleteModal(false)}
+                onClick={() => setShowCompleteModal(false)}
                 variant="outline"
-                disabled={isDeleting}
+                disabled={isCompleting}
                 className="px-4 py-2"
               >
                 Cancel
               </Button>
               <Button
-                onClick={handleDeleteVisitor}
-                disabled={isDeleting}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white"
+                onClick={handleCompleteVisitor}
+                disabled={isCompleting}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white"
               >
-                {isDeleting ? 'Deleting...' : 'Delete'}
+                {isCompleting ? 'Updating...' : 'Confirm'}
               </Button>
             </div>
           </div>

@@ -232,6 +232,13 @@ export default function VisitorCheckInPage() {
                 Appointment
               </Button>
             </Link>
+            {user?.superuser && (
+              <Link href="/datasheet">
+                <Button variant="outline" size="sm" className="text-xs sm:text-sm">
+                  Download Data
+                </Button>
+              </Link>
+            )}
             {/* Admin link - visible to all users */}
             <Link href="/admin">
               <Button variant="outline" size="sm" className="text-xs sm:text-sm">
