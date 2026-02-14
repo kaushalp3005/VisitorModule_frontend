@@ -733,7 +733,7 @@ export default function AdminPage() {
     } catch (error) {
       console.error('Error fetching visitor card assignments:', error);
     }
-  }, [approvedVisitors, user]);
+  }, [user]);
 
   // Fetch card assignments when approved visitors change
   // Only fetch if ALL visitors have null/undefined assignedCard (initial load scenario)
