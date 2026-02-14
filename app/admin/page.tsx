@@ -810,9 +810,11 @@ export default function AdminPage() {
   }, [approvedVisitors, selectedDate, showAllVisitors]);
 
   // Sort approved visitors by most recent first (based on check-in time)
-  const sortedApprovedVisitors = [...filteredByDate].sort((a, b) => {
-    return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
-  });
+  const sortedApprovedVisitors = useMemo(() => {
+    return [...filteredByDate].sort((a, b) => {
+      return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+    });
+  }, [filteredByDate]);
 
   return (
     <>
