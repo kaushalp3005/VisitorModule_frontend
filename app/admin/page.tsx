@@ -92,8 +92,8 @@ export default function AdminPage() {
   const [isCompleting, setIsCompleting] = useState(false);
 
   // Date filter state
-  const today = new Date().toISOString().split('T')[0]; // "YYYY-MM-DD"
-  const [selectedDate, setSelectedDate] = useState(today);
+  const today = useMemo(() => new Date().toISOString().split('T')[0], []); // "YYYY-MM-DD"
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [showAllVisitors, setShowAllVisitors] = useState(false);
 
   // Fetch all approved visitors
