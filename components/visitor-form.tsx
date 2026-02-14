@@ -1237,7 +1237,7 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
                   autoPlay
                   playsInline
                   muted
-                  className="w-full h-full object-cover transform scale-x-[-1]"
+                  className="w-full h-full object-cover"
                   style={{ display: isCameraActive ? 'block' : 'none' }}
                 />
                 {!isCameraActive && (

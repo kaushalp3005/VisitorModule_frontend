@@ -43,6 +43,38 @@ interface VisitorData {
   assignedCard?: string | null;
 }
 
+// Utility function to format card names to readable format
+const formatCardName = (cardName: string): string => {
+  // Match pattern: CU003, VE001, VI002, etc.
+  const match = cardName.match(/^([A-Z]{2})(\d+)$/i);
+
+  if (match) {
+    const [, typeCode, number] = match;
+
+    // Map type codes to full names
+    const typeMap: { [key: string]: string } = {
+      'CU': 'Customer',
+      'VE': 'Vendor',
+      'VI': 'Visitor'
+    };
+
+    const typeName = typeMap[typeCode.toUpperCase()] || typeCode;
+    return `${typeName} Card_${number}`;
+  }
+
+  // Fallback pattern: type_number_letter (e.g., customer_1_A, vendor_2_B)
+  const fallbackMatch = cardName.match(/^([a-z]+)_(\d+)_([a-z])$/i);
+  if (fallbackMatch) {
+    const [, type, number] = fallbackMatch;
+    const formattedType = type.charAt(0).toUpperCase() + type.slice(1);
+    const paddedNumber = number.padStart(2, '0');
+    return `${formattedType} Card_${paddedNumber}`;
+  }
+
+  // Return original name if no pattern matches
+  return cardName;
+};
+
 export default function AppointmentPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading, logout } = useAuth();
@@ -728,7 +760,7 @@ export default function AppointmentPage() {
                           <svg className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4 md:h-4 md:w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" />
                           </svg>
-                          <span className="truncate">{scannedVisitor.assignedCard}</span>
+                          <span className="truncate">{formatCardName(scannedVisitor.assignedCard)}</span>
                         </div>
                       ) : (
                         <p className="text-orange-600 font-medium text-[11px] sm:text-xs md:text-sm">Not assigned</p>
@@ -768,7 +800,7 @@ export default function AppointmentPage() {
                         className="flex items-center justify-between p-2 sm:p-2.5 md:p-3 rounded-lg border border-border bg-muted/50 gap-2"
                       >
                         <div className="min-w-0 flex-1">
-                          <p className="text-xs sm:text-sm md:text-base font-medium text-foreground truncate">{card.card_name}</p>
+                          <p className="text-xs sm:text-sm md:text-base font-medium text-foreground truncate">{formatCardName(card.card_name)}</p>
                           <p className="text-[9px] sm:text-[10px] md:text-xs text-green-600">Available</p>
                         </div>
                         <Button
@@ -798,7 +830,7 @@ export default function AppointmentPage() {
                         className="flex items-center justify-between p-2 sm:p-2.5 md:p-3 rounded-lg border border-border bg-muted/50 gap-2"
                       >
                         <div className="min-w-0 flex-1">
-                          <p className="text-xs sm:text-sm md:text-base font-medium text-foreground truncate">{card.card_name}</p>
+                          <p className="text-xs sm:text-sm md:text-base font-medium text-foreground truncate">{formatCardName(card.card_name)}</p>
                           <p className="text-[9px] sm:text-[10px] md:text-xs text-red-600">
                             Occupied (Visitor #{card.occ_to})
                           </p>

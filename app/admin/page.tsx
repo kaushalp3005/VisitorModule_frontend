@@ -1,16 +1,20 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AppHeader } from '@/components/app-header';
 import { PageContainer } from '@/components/page-container';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Toast, useToast } from '@/components/toast';
 import { useAuth } from '@/lib/auth-store';
 import { API_ENDPOINTS } from '@/lib/api-config';
 import { QrScanner } from '@/components/qr-scanner';
-import { ScanQrCode, RefreshCw, CheckCircle } from 'lucide-react';
+import { ScanQrCode, RefreshCw, CheckCircle, CalendarDays } from 'lucide-react';
+import { isSameDay, parseISO } from 'date-fns';
 
 interface ICard {
   id: number;
@@ -41,6 +45,38 @@ interface Visitor {
   assignedCard?: string | null;
 }
 
+// Utility function to format card names to readable format
+const formatCardName = (cardName: string): string => {
+  // Match pattern: CU003, VE001, VI002, etc.
+  const match = cardName.match(/^([A-Z]{2})(\d+)$/i);
+
+  if (match) {
+    const [, typeCode, number] = match;
+
+    // Map type codes to full names
+    const typeMap: { [key: string]: string } = {
+      'CU': 'Customer',
+      'VE': 'Vendor',
+      'VI': 'Visitor'
+    };
+
+    const typeName = typeMap[typeCode.toUpperCase()] || typeCode;
+    return `${typeName} Card_${number}`;
+  }
+
+  // Fallback pattern: type_number_letter (e.g., customer_1_A, vendor_2_B)
+  const fallbackMatch = cardName.match(/^([a-z]+)_(\d+)_([a-z])$/i);
+  if (fallbackMatch) {
+    const [, type, number] = fallbackMatch;
+    const formattedType = type.charAt(0).toUpperCase() + type.slice(1);
+    const paddedNumber = number.padStart(2, '0');
+    return `${formattedType} Card_${paddedNumber}`;
+  }
+
+  // Return original name if no pattern matches
+  return cardName;
+};
+
 export default function AdminPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading, logout } = useAuth();
@@ -54,6 +90,11 @@ export default function AdminPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
+
+  // Date filter state
+  const today = new Date().toISOString().split('T')[0]; // "YYYY-MM-DD"
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [showAllVisitors, setShowAllVisitors] = useState(false);
 
   // Fetch all approved visitors
   const fetchApprovedVisitors = useCallback(async () => {
@@ -747,24 +788,30 @@ export default function AdminPage() {
 
   const occupiedCards = icards.filter((card) => card.occ_status);
 
-  // Sort approved visitors: those with assigned cards first, then by name for those with cards, and by most recent approval for those without cards
-  const sortedApprovedVisitors = [...approvedVisitors].sort((a, b) => {
-    // First, sort by whether they have an assigned card (with card first)
-    if (a.assignedCard && !b.assignedCard) return -1;
-    if (!a.assignedCard && b.assignedCard) return 1;
-
-    // If both have cards, sort by name
-    if (a.assignedCard && b.assignedCard) {
-      return a.name.localeCompare(b.name);
+  // Filter visitors by selected date
+  const filteredByDate = useMemo(() => {
+    // If "Show All Visitors" is enabled, return all visitors without date filtering
+    if (showAllVisitors) {
+      return approvedVisitors;
     }
 
-    // If both don't have cards, sort by most recent approval (updatedAt descending)
-    if (!a.assignedCard && !b.assignedCard) {
-      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-    }
+    return approvedVisitors.filter((visitor) => {
+      if (!selectedDate) return true;
 
-    // Fallback to name sorting
-    return a.name.localeCompare(b.name);
+      try {
+        const visitorDate = parseISO(visitor.submittedAt);
+        const filterDate = parseISO(selectedDate);
+        return isSameDay(visitorDate, filterDate);
+      } catch (error) {
+        console.error('Error parsing date:', error);
+        return false;
+      }
+    });
+  }, [approvedVisitors, selectedDate, showAllVisitors]);
+
+  // Sort approved visitors by most recent first (based on check-in time)
+  const sortedApprovedVisitors = [...filteredByDate].sort((a, b) => {
+    return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
   });
 
   return (
@@ -798,27 +845,27 @@ export default function AdminPage() {
           {/* Header - Responsive */}
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-3 md:gap-4">
             <div>
-              <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-foreground">Admin Dashboard</h1>
-              <p className="mt-1 sm:mt-1.5 md:mt-2 text-xs sm:text-sm md:text-base text-muted-foreground">
+              <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-foreground">Admin Dashboard</h1>
+              <p className="mt-1 sm:mt-1.5 md:mt-2 text-sm sm:text-base md:text-lg text-muted-foreground">
                 Manage ICard assignments for approved visitors
               </p>
             </div>
-            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+            <div className="flex flex-col sm:flex-row gap-2 md:gap-3 w-full sm:w-auto">
               <Button
                 onClick={handleRefresh}
                 variant="outline"
                 disabled={isRefreshing}
-                className="border-border text-xs md:text-sm h-9 md:h-10"
+                className="border-border text-sm h-11 md:h-10"
               >
-                <RefreshCw className={`mr-1.5 md:mr-2 h-3 w-3 md:h-4 md:w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`mr-1.5 md:mr-2 h-4 w-4 md:h-5 md:w-5 ${isRefreshing ? 'animate-spin' : ''}`} />
                 <span className="hidden sm:inline">{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
                 <span className="sm:hidden">↻</span>
               </Button>
               <Button
                 onClick={() => setShowScanner(true)}
-                className="bg-primary text-primary-foreground hover:bg-primary/90 text-xs md:text-sm h-9 md:h-10"
+                className="bg-primary text-primary-foreground hover:bg-primary/90 text-sm h-11 md:h-10"
               >
-                <ScanQrCode className="mr-1.5 md:mr-2 h-3 w-3 md:h-4 md:w-4" />
+                <ScanQrCode className="mr-1.5 md:mr-2 h-4 w-4 md:h-5 md:w-5" />
                 <span className="hidden sm:inline">Scan QR Code</span>
                 <span className="sm:hidden">Scan QR</span>
               </Button>
@@ -826,32 +873,98 @@ export default function AdminPage() {
           </div>
 
           {/* Main Content - Fully Responsive Grid */}
-          <div className="grid gap-3 sm:gap-4 md:gap-6 lg:grid-cols-2">
+          <div className="grid gap-4 md:gap-6 xl:grid-cols-2">
             {/* Left: Approved Visitors List - Fully Responsive */}
             <div className="space-y-2 sm:space-y-3 md:space-y-4">
+              {/* Header with title and count */}
               <div className="flex flex-col xs:flex-row xs:items-center xs:justify-between gap-1.5 sm:gap-2">
                 <h2 className="text-base sm:text-lg md:text-xl font-semibold text-foreground">
-                  Approved Visitors ({approvedVisitors.length})
+                  Approved Visitors ({filteredByDate.length})
                 </h2>
-                <p className="text-[9px] xs:text-[10px] sm:text-xs text-muted-foreground">
-                  {approvedVisitors.filter(v => v.assignedCard).length} with I-Cards
+                <p className="text-xs sm:text-sm text-muted-foreground">
+                  {filteredByDate.filter(v => v.assignedCard).length} with I-Cards
                 </p>
+              </div>
+
+              {/* Date Filter */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <Label htmlFor="visitor-date" className="text-sm text-muted-foreground flex items-center gap-1.5">
+                  <CalendarDays className="h-4 w-4 md:h-5 md:w-5" />
+                  Filter by Date:
+                </Label>
+                <Input
+                  id="visitor-date"
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => {
+                    setSelectedDate(e.target.value);
+                    setSelectedVisitor(null); // Clear selection when filter changes
+                  }}
+                  max={today}
+                  disabled={showAllVisitors}
+                  className="w-auto min-w-[140px] text-sm h-11 md:h-10"
+                />
+                {selectedDate !== today && !showAllVisitors && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSelectedDate(today)}
+                    className="text-sm h-11 md:h-10"
+                  >
+                    Today
+                  </Button>
+                )}
+              </div>
+
+              {/* Show All Visitors Checkbox */}
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center min-w-[44px] min-h-[44px]">
+                  <Checkbox
+                    id="show-all-visitors"
+                    checked={showAllVisitors}
+                    onCheckedChange={(checked) => {
+                      setShowAllVisitors(checked as boolean);
+                      setSelectedVisitor(null); // Clear selection when filter changes
+                    }}
+                  />
+                </div>
+                <Label
+                  htmlFor="show-all-visitors"
+                  className="text-sm text-foreground font-medium cursor-pointer"
+                >
+                  Show All Visitors (No Date Filter)
+                </Label>
               </div>
 
               {isLoading ? (
                 <div className="rounded-lg border border-border border-dashed p-6 sm:p-8 text-center">
-                  <p className="text-xs sm:text-sm md:text-base text-muted-foreground">Loading visitors...</p>
+                  <p className="text-sm sm:text-base md:text-lg text-muted-foreground">Loading visitors...</p>
                 </div>
-              ) : approvedVisitors.length === 0 ? (
-                <div className="rounded-lg border border-border border-dashed p-4 sm:p-6 md:p-8 text-center">
-                  <p className="text-xs sm:text-sm md:text-base text-muted-foreground">No approved visitors found.</p>
+              ) : filteredByDate.length === 0 ? (
+                <div className="rounded-lg border border-border border-dashed p-4 sm:p-6 md:p-8 text-center space-y-3">
+                  <p className="text-sm sm:text-base md:text-lg text-muted-foreground">
+                    {showAllVisitors
+                      ? 'No approved visitors found.'
+                      : `No approved visitors found for ${new Date(selectedDate).toLocaleDateString()}.`
+                    }
+                  </p>
+                  {!showAllVisitors && selectedDate !== today && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSelectedDate(today)}
+                      className="text-sm h-11 md:h-10"
+                    >
+                      Show Today's Visitors
+                    </Button>
+                  )}
                 </div>
               ) : (
-                <div className="space-y-1.5 sm:space-y-2 md:space-y-3 max-h-[calc(100vh-220px)] sm:max-h-[calc(100vh-250px)] md:max-h-[calc(100vh-300px)] overflow-y-auto -mx-1 px-1">
+                <div className="space-y-1.5 sm:space-y-2 md:space-y-3 max-h-[calc(100vh-280px)] sm:max-h-[calc(100vh-300px)] md:max-h-[calc(100vh-320px)] overflow-y-auto -mx-1 px-1">
                   {/* Section: Visitors with I-Cards - Fully Responsive */}
                   {sortedApprovedVisitors.some(v => v.assignedCard) && (
                     <div className="sticky top-0 bg-background/95 backdrop-blur-sm py-1 sm:py-1.5 md:py-2 px-2 sm:px-2.5 md:px-3 -mx-1 mb-1 sm:mb-1.5 md:mb-2 border-b border-border z-10">
-                      <p className="text-[9px] sm:text-[10px] md:text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      <p className="text-xs sm:text-sm font-semibold text-muted-foreground uppercase tracking-wide">
                         With I-Cards ({sortedApprovedVisitors.filter(v => v.assignedCard).length})
                       </p>
                     </div>
@@ -868,14 +981,14 @@ export default function AdminPage() {
                       <div key={visitor.id}>
                         {showSeparator && (
                           <div className="sticky top-0 bg-background/95 backdrop-blur-sm py-1 sm:py-1.5 md:py-2 px-2 sm:px-2.5 md:px-3 -mx-1 mb-1 sm:mb-1.5 md:mb-2 mt-1 sm:mt-1.5 md:mt-2 border-b border-border z-10">
-                            <p className="text-[9px] sm:text-[10px] md:text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                            <p className="text-xs sm:text-sm font-semibold text-muted-foreground uppercase tracking-wide">
                               Without I-Cards ({sortedApprovedVisitors.filter(v => !v.assignedCard).length})
                             </p>
                           </div>
                         )}
                         <div
                           onClick={() => setSelectedVisitor(visitor)}
-                          className={`rounded-lg border p-2.5 sm:p-3 md:p-4 cursor-pointer transition-colors touch-manipulation ${
+                          className={`rounded-lg border p-3 sm:p-4 md:p-5 cursor-pointer transition-colors touch-manipulation ${
                             selectedVisitor?.id === visitor.id
                               ? 'border-primary bg-primary/5'
                               : 'border-border bg-card hover:bg-muted/50 active:bg-muted/70'
@@ -883,30 +996,30 @@ export default function AdminPage() {
                         >
                           <div className="flex items-start justify-between gap-1.5 sm:gap-2">
                             <div className="flex-1 min-w-0">
-                              <h3 className="text-xs sm:text-sm md:text-base font-semibold text-foreground truncate">
+                              <h3 className="text-sm sm:text-base md:text-lg font-semibold text-foreground truncate">
                                 {visitor.name}
                               </h3>
-                              <p className="text-[10px] sm:text-xs md:text-sm text-muted-foreground mt-0.5 sm:mt-0.5 md:mt-1 truncate">
+                              <p className="text-xs sm:text-sm md:text-base text-muted-foreground mt-0.5 sm:mt-0.5 md:mt-1 truncate">
                                 {visitor.company}
                               </p>
-                              <p className="text-[9px] sm:text-[10px] md:text-xs text-muted-foreground mt-0.5 sm:mt-0.5 md:mt-1">
+                              <p className="text-xs sm:text-sm text-muted-foreground mt-0.5 sm:mt-0.5 md:mt-1">
                                 Visitor #: {visitor.visitorNumber}
                               </p>
                               {visitor.assignedCard && (
-                                <div className="mt-1 sm:mt-1.5 md:mt-2 inline-flex items-center rounded-md bg-blue-50 px-1.5 sm:px-1.5 md:px-2 py-0.5 sm:py-0.5 md:py-1 text-[9px] sm:text-[10px] md:text-xs font-medium text-blue-700 border border-blue-200">
-                                  <svg className="mr-0.5 sm:mr-0.5 md:mr-1 h-2.5 w-2.5 sm:h-2.5 sm:w-2.5 md:h-3 md:w-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <div className="mt-1 sm:mt-1.5 md:mt-2 inline-flex items-center rounded-md bg-blue-50 px-2 py-1 md:px-2.5 md:py-1.5 text-xs sm:text-sm font-medium text-blue-700 border border-blue-200">
+                                  <svg className="mr-1 md:mr-1.5 h-3.5 w-3.5 md:h-4 md:w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" />
                                   </svg>
-                                  <span className="truncate">ICard: {visitor.assignedCard}</span>
+                                  <span className="truncate">{formatCardName(visitor.assignedCard)}</span>
                                 </div>
                               )}
                             </div>
                             <div className="flex flex-col items-end gap-0.5 sm:gap-1 md:gap-2 flex-shrink-0">
-                              <span className="inline-flex items-center rounded-full bg-green-100 px-1.5 sm:px-1.5 md:px-2.5 py-0.5 text-[9px] sm:text-[10px] md:text-xs font-medium text-green-800">
+                              <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-1 md:px-2.5 md:py-1.5 text-xs sm:text-sm font-medium text-green-800">
                                 Approved
                               </span>
                               {!visitor.assignedCard && (
-                                <span className="inline-flex items-center rounded-full bg-orange-100 px-1.5 sm:px-1.5 md:px-2.5 py-0.5 text-[9px] sm:text-[10px] md:text-xs font-medium text-orange-800">
+                                <span className="inline-flex items-center rounded-full bg-orange-100 px-2 py-1 md:px-2.5 md:py-1.5 text-xs sm:text-sm font-medium text-orange-800">
                                   No Card
                                 </span>
                               )}
@@ -929,7 +1042,7 @@ export default function AdminPage() {
                     <h2 className="text-base sm:text-lg md:text-xl font-semibold text-foreground mb-2 sm:mb-3 md:mb-4">
                       Visitor Details
                     </h2>
-                    <div className="space-y-1.5 sm:space-y-2 md:space-y-3 text-[11px] sm:text-xs md:text-sm">
+                    <div className="space-y-1.5 sm:space-y-2 md:space-y-3 text-sm">
                       <div>
                         <p className="text-muted-foreground">Name</p>
                         <p className="text-foreground font-medium">{selectedVisitor.name}</p>
@@ -957,31 +1070,31 @@ export default function AdminPage() {
                       <div>
                         <p className="text-muted-foreground">Assigned ICard</p>
                         {selectedVisitor.assignedCard ? (
-                          <div className="inline-flex items-center rounded-md bg-blue-50 px-2 sm:px-2 md:px-3 py-1 sm:py-1 md:py-1.5 text-[11px] sm:text-xs md:text-sm font-medium text-blue-700 border border-blue-200 mt-1">
-                            <svg className="mr-1 sm:mr-1 md:mr-2 h-3 w-3 sm:h-3 sm:w-3 md:h-4 md:w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <div className="inline-flex items-center rounded-md bg-blue-50 px-2 py-1 md:px-2.5 md:py-1.5 text-xs sm:text-sm font-medium text-blue-700 border border-blue-200 mt-1">
+                            <svg className="mr-1 md:mr-1.5 h-3.5 w-3.5 md:h-4 md:w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" />
                             </svg>
-                            <span className="truncate">{selectedVisitor.assignedCard}</span>
+                            <span className="truncate">{formatCardName(selectedVisitor.assignedCard)}</span>
                           </div>
                         ) : (
-                          <p className="text-orange-600 font-medium text-[11px] sm:text-xs md:text-sm">Not assigned</p>
+                          <p className="text-orange-600 font-medium text-sm">Not assigned</p>
                         )}
                       </div>
                     </div>
-                    
+
                     {/* Completed Button */}
                     <div className="mt-4 pt-4 border-t border-border">
                       <Button
                         onClick={() => setShowCompleteModal(true)}
                         variant="outline"
                         disabled={!!selectedVisitor.assignedCard}
-                        className={`w-full text-xs md:text-sm h-8 md:h-9 ${
+                        className={`w-full text-sm h-11 md:h-10 ${
                           selectedVisitor.assignedCard
                             ? 'border-gray-200 text-gray-400 cursor-not-allowed'
                             : 'border-green-300 text-green-700 hover:bg-green-50 hover:text-green-800'
                         }`}
                       >
-                        <CheckCircle className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                        <CheckCircle className="mr-2 h-4 w-4 md:h-5 md:w-5" />
                         {selectedVisitor.assignedCard ? 'Release ICard First' : 'Completed'}
                       </Button>
                     </div>
@@ -994,7 +1107,7 @@ export default function AdminPage() {
                         Available ICards ({availableCards.length})
                       </h2>
                     {availableCards.length === 0 ? (
-                      <p className="text-[11px] sm:text-xs md:text-sm text-muted-foreground">
+                      <p className="text-sm text-muted-foreground">
                         No ICards available. All cards are currently occupied.
                       </p>
                     ) : (
@@ -1005,14 +1118,14 @@ export default function AdminPage() {
                             className="flex items-center justify-between p-2 sm:p-2.5 md:p-3 rounded-lg border border-border bg-muted/50 gap-2"
                           >
                             <div className="min-w-0 flex-1">
-                              <p className="text-xs sm:text-sm md:text-base font-medium text-foreground truncate">{card.icard_name || card.card_name}</p>
-                              <p className="text-[9px] sm:text-[10px] md:text-xs text-green-600">Available</p>
+                              <p className="text-xs sm:text-sm md:text-base font-medium text-foreground truncate">{formatCardName(card.icard_name || card.card_name)}</p>
+                              <p className="text-xs sm:text-sm text-green-600">Available</p>
                             </div>
                             <Button
                               size="sm"
                               onClick={() => handleAssignCard(card.id)}
                               disabled={isAssigning}
-                              className="bg-primary text-primary-foreground hover:bg-primary/90 text-[10px] sm:text-xs md:text-sm h-7 sm:h-7 md:h-8 px-2 sm:px-2.5 md:px-3 flex-shrink-0 touch-manipulation"
+                              className="bg-primary text-primary-foreground hover:bg-primary/90 text-sm h-11 md:h-10 px-3 md:px-2.5 flex-shrink-0 touch-manipulation"
                             >
                               {isAssigning ? 'Assigning...' : 'Assign'}
                             </Button>
@@ -1036,8 +1149,8 @@ export default function AdminPage() {
                             className="flex items-center justify-between p-2 sm:p-2.5 md:p-3 rounded-lg border border-border bg-muted/50 gap-2"
                           >
                             <div className="min-w-0 flex-1">
-                              <p className="text-xs sm:text-sm md:text-base font-medium text-foreground truncate">{card.icard_name || card.card_name}</p>
-                              <p className="text-[9px] sm:text-[10px] md:text-xs text-red-600">
+                              <p className="text-xs sm:text-sm md:text-base font-medium text-foreground truncate">{formatCardName(card.icard_name || card.card_name)}</p>
+                              <p className="text-xs sm:text-sm text-red-600">
                                 Occupied (Visitor #{card.occ_to})
                               </p>
                             </div>
@@ -1045,7 +1158,7 @@ export default function AdminPage() {
                               size="sm"
                               variant="outline"
                               onClick={() => handleReleaseCard(card.id)}
-                              className="text-destructive hover:text-destructive text-[10px] sm:text-xs md:text-sm h-7 sm:h-7 md:h-8 px-2 sm:px-2.5 md:px-3 flex-shrink-0 touch-manipulation"
+                              className="text-destructive hover:text-destructive text-sm h-11 md:h-10 px-3 md:px-2.5 flex-shrink-0 touch-manipulation"
                             >
                               Release
                             </Button>
@@ -1057,7 +1170,7 @@ export default function AdminPage() {
                 </>
               ) : (
                 <div className="rounded-lg border border-border border-dashed p-6 sm:p-8 md:p-12 text-center">
-                  <p className="text-xs sm:text-sm md:text-base text-muted-foreground">
+                  <p className="text-sm sm:text-base md:text-lg text-muted-foreground">
                     Select a visitor from the list to view details and assign an ICard
                   </p>
                 </div>
@@ -1086,26 +1199,26 @@ export default function AdminPage() {
       {/* Complete Confirmation Modal */}
       {showCompleteModal && selectedVisitor && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-auto">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+          <div className="bg-white rounded-lg p-4 sm:p-6 max-w-md w-full mx-4">
+            <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">
               Mark Visit as Completed
             </h3>
-            <p className="text-gray-600 mb-6">
+            <p className="text-sm sm:text-base text-gray-600 mb-6">
               Are you sure you want to mark visitor <strong>{selectedVisitor.name}</strong>'s visit as completed?
             </p>
-            <div className="flex gap-3 justify-end">
+            <div className="flex flex-col sm:flex-row gap-3 justify-end">
               <Button
                 onClick={() => setShowCompleteModal(false)}
                 variant="outline"
                 disabled={isCompleting}
-                className="px-4 py-2"
+                className="w-full sm:w-auto h-11 md:h-10 text-sm"
               >
                 Cancel
               </Button>
               <Button
                 onClick={handleCompleteVisitor}
                 disabled={isCompleting}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white"
+                className="w-full sm:w-auto h-11 md:h-10 text-sm bg-green-600 hover:bg-green-700 text-white"
               >
                 {isCompleting ? 'Updating...' : 'Confirm'}
               </Button>
