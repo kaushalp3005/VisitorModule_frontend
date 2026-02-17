@@ -83,6 +83,7 @@ export default function AppointmentPage() {
   const [icards, setIcards] = useState<ICard[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isAssigning, setIsAssigning] = useState(false);
+  const [isReleasingAll, setIsReleasingAll] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [showReleaseScanner, setShowReleaseScanner] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -462,6 +463,36 @@ export default function AppointmentPage() {
     }
   };
 
+  // Release all ICards (fix "all occupied" when no assignments were made)
+  const handleReleaseAllCards = async () => {
+    if (!user || occupiedCards.length === 0) return;
+    setIsReleasingAll(true);
+    try {
+      const response = await fetch(`${API_ENDPOINTS.icards}/release-all`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${user.access_token}`,
+          'accept': 'application/json',
+        },
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to release all ICards');
+      }
+      const data = await response.json();
+      setIcards(data.cards || []);
+      addToast('All ICards released. They are now available.', 'success');
+      if (scannedVisitor) {
+        const updatedVisitor = await fetchVisitorById(scannedVisitor.id.toString());
+        if (updatedVisitor) setScannedVisitor(updatedVisitor);
+      }
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'Failed to release all ICards', 'error');
+    } finally {
+      setIsReleasingAll(false);
+    }
+  };
+
   // Copy Google Form link
   const copyGoogleFormLink = async () => {
     try {
@@ -789,9 +820,24 @@ export default function AppointmentPage() {
                   Available ICards ({availableCards.length})
                 </h2>
                 {availableCards.length === 0 ? (
-                  <p className="text-[11px] sm:text-xs md:text-sm text-muted-foreground">
-                    No ICards available. All cards are currently occupied.
-                  </p>
+                  <div className="space-y-2">
+                    <p className="text-[11px] sm:text-xs md:text-sm text-muted-foreground">
+                      {icards.length === 0
+                        ? 'No ICards configured. Add ICards in the system to assign to visitors.'
+                        : 'No ICards available. All cards are currently occupied.'}
+                    </p>
+                    {occupiedCards.length > 0 && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleReleaseAllCards}
+                        disabled={isReleasingAll}
+                        className="text-destructive hover:text-destructive border-destructive/50 text-[10px] sm:text-xs"
+                      >
+                        {isReleasingAll ? 'Releasing...' : 'Release all ICards'}
+                      </Button>
+                    )}
+                  </div>
                 ) : (
                   <div className="space-y-1 sm:space-y-1.5 md:space-y-2 max-h-[250px] sm:max-h-[300px] md:max-h-[400px] overflow-y-auto">
                     {availableCards.map((card) => (

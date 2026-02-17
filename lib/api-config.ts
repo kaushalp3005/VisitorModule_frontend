@@ -30,9 +30,9 @@ function getApiUrl(): string {
       return 'http://localhost:8000';
     }
 
-    // If running in production and no env var is set, fall back to Render backend.
+    // If running in production and no env var is set, fall back to AWS Lambda backend.
     // This prevents the app from accidentally calling localhost in production.
-    return 'https://visitor-management-backend-2hof.onrender.com';
+    return 'https://8bndl5pqs1.execute-api.ap-south-1.amazonaws.com/prod';
   }
 
   // Default fallback

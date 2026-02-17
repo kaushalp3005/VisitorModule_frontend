@@ -86,6 +86,7 @@ export default function AdminPage() {
   const [selectedVisitor, setSelectedVisitor] = useState<Visitor | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAssigning, setIsAssigning] = useState(false);
+  const [isReleasingAll, setIsReleasingAll] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
@@ -95,6 +96,34 @@ export default function AdminPage() {
   const today = useMemo(() => new Date().toISOString().split('T')[0], []); // "YYYY-MM-DD"
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [showAllVisitors, setShowAllVisitors] = useState(false);
+
+  // Filter visitors by selected date - MOVED UP to maintain hook order
+  const filteredByDate = useMemo(() => {
+    // If "Show All Visitors" is enabled, return all visitors without date filtering
+    if (showAllVisitors) {
+      return approvedVisitors;
+    }
+
+    return approvedVisitors.filter((visitor) => {
+      if (!selectedDate) return true;
+
+      try {
+        const visitorDate = parseISO(visitor.submittedAt);
+        const filterDate = parseISO(selectedDate);
+        return isSameDay(visitorDate, filterDate);
+      } catch (error) {
+        console.error('Error parsing date:', error);
+        return false;
+      }
+    });
+  }, [approvedVisitors, selectedDate, showAllVisitors]);
+
+  // Sort approved visitors by most recent first - MOVED UP to maintain hook order
+  const sortedApprovedVisitors = useMemo(() => {
+    return [...filteredByDate].sort((a, b) => {
+      return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+    });
+  }, [filteredByDate]);
 
   // Fetch all approved visitors
   const fetchApprovedVisitors = useCallback(async () => {
@@ -287,6 +316,15 @@ export default function AdminPage() {
 
       const data = await response.json();
       console.log('ICards fetched successfully:', data);
+      console.log('📊 ICard Status Summary:', {
+        total: data.cards?.length || 0,
+        occupied: data.cards?.filter((c: ICard) => c.occ_status).length || 0,
+        available: data.cards?.filter((c: ICard) => !c.occ_status).length || 0,
+        occupiedCards: data.cards?.filter((c: ICard) => c.occ_status).map((c: ICard) => ({
+          name: c.card_name,
+          occupiedBy: c.occ_to
+        })) || []
+      });
       setIcards(data.cards || []);
     } catch (error) {
       console.error('Error fetching ICards:', error);
@@ -509,6 +547,38 @@ export default function AdminPage() {
     }
   };
 
+  // Release all ICards (fix "all occupied" when no assignments were made)
+  const handleReleaseAllCards = async () => {
+    if (!user || occupiedCards.length === 0) return;
+
+    console.log(`🔓 Attempting to release all ${occupiedCards.length} occupied ICards...`);
+    setIsReleasingAll(true);
+    try {
+      const response = await fetch(`${API_ENDPOINTS.icards}/release-all`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${user.access_token}`,
+          'accept': 'application/json',
+        },
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        console.error('❌ Failed to release all cards:', err);
+        throw new Error(err.detail || 'Failed to release all ICards');
+      }
+      const data = await response.json();
+      console.log('✅ All ICards released successfully:', data);
+      setIcards(data.cards || []);
+      addToast(`All ${occupiedCards.length} ICards released successfully!`, 'success');
+      await fetchApprovedVisitors();
+    } catch (error) {
+      console.error('❌ Error releasing all cards:', error);
+      addToast(error instanceof Error ? error.message : 'Failed to release all ICards', 'error');
+    } finally {
+      setIsReleasingAll(false);
+    }
+  };
+
   // Handle QR code scan
   const handleQrScan = async (scannedData: string) => {
     console.log('🔍 Processing QR scan:', scannedData);
@@ -605,6 +675,65 @@ export default function AdminPage() {
     }
   };
 
+  // Fetch card assignments for all approved visitors using the new endpoint - MOVED UP
+  const fetchVisitorCardAssignments = useCallback(async (visitorsToFetch?: typeof approvedVisitors) => {
+    // Use provided visitors or current state
+    const visitors = visitorsToFetch || approvedVisitors;
+    if (visitors.length === 0) return;
+
+    try {
+      // Fetch card assignments for all visitors in parallel
+      const cardPromises = visitors.map(async (visitor) => {
+        try {
+          const response = await fetch(`${API_ENDPOINTS.icards}/visitor/${visitor.rawId}/card`, {
+            headers: {
+              'Authorization': `Bearer ${user?.access_token}`,
+              'accept': 'application/json',
+            },
+          });
+          if (response.ok) {
+            const data = await response.json();
+            return {
+              visitorId: visitor.rawId,
+              cardName: data.icard_name || data.card_name,
+              cardId: data.card_id,
+            };
+          }
+        } catch (error) {
+          console.error(`Error fetching card for visitor ${visitor.rawId}:`, error);
+        }
+        return { visitorId: visitor.rawId, cardName: null, cardId: null };
+      });
+
+      const cardAssignments = await Promise.all(cardPromises);
+
+      // Create a map of visitor ID to card name
+      const visitorCardMap = new Map<number, string | null>();
+      cardAssignments.forEach((assignment) => {
+        visitorCardMap.set(assignment.visitorId, assignment.cardName);
+      });
+
+      // Update approved visitors with card assignments
+      // Only update visitors that don't already have a card assigned (to preserve immediate updates)
+      setApprovedVisitors((prevVisitors) =>
+        prevVisitors.map((visitor) => {
+          const cardName = visitorCardMap.get(visitor.rawId);
+          // Only update if visitor doesn't already have a card assigned
+          // This preserves immediate state updates after assignment
+          if (visitor.assignedCard === null || visitor.assignedCard === undefined) {
+            return {
+              ...visitor,
+              assignedCard: cardName || null,
+            };
+          }
+          return visitor; // Keep existing assignedCard if already set
+        })
+      );
+    } catch (error) {
+      console.error('Error fetching visitor card assignments:', error);
+    }
+  }, [user, approvedVisitors]);
+
   // Manual refresh function
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -676,65 +805,6 @@ export default function AdminPage() {
     return () => clearInterval(intervalId);
   }, [user, fetchICards]);
 
-  // Fetch card assignments for all approved visitors using the new endpoint
-  const fetchVisitorCardAssignments = useCallback(async (visitorsToFetch?: typeof approvedVisitors) => {
-    // Use provided visitors or current state
-    const visitors = visitorsToFetch || approvedVisitors;
-    if (visitors.length === 0) return;
-
-    try {
-      // Fetch card assignments for all visitors in parallel
-      const cardPromises = visitors.map(async (visitor) => {
-        try {
-          const response = await fetch(`${API_ENDPOINTS.icards}/visitor/${visitor.rawId}/card`, {
-            headers: {
-              'Authorization': `Bearer ${user?.access_token}`,
-              'accept': 'application/json',
-            },
-          });
-          if (response.ok) {
-            const data = await response.json();
-            return {
-              visitorId: visitor.rawId,
-              cardName: data.icard_name || data.card_name,
-              cardId: data.card_id,
-            };
-          }
-        } catch (error) {
-          console.error(`Error fetching card for visitor ${visitor.rawId}:`, error);
-        }
-        return { visitorId: visitor.rawId, cardName: null, cardId: null };
-      });
-
-      const cardAssignments = await Promise.all(cardPromises);
-
-      // Create a map of visitor ID to card name
-      const visitorCardMap = new Map<number, string | null>();
-      cardAssignments.forEach((assignment) => {
-        visitorCardMap.set(assignment.visitorId, assignment.cardName);
-      });
-
-      // Update approved visitors with card assignments
-      // Only update visitors that don't already have a card assigned (to preserve immediate updates)
-      setApprovedVisitors((prevVisitors) =>
-        prevVisitors.map((visitor) => {
-          const cardName = visitorCardMap.get(visitor.rawId);
-          // Only update if visitor doesn't already have a card assigned
-          // This preserves immediate state updates after assignment
-          if (visitor.assignedCard === null || visitor.assignedCard === undefined) {
-            return {
-              ...visitor,
-              assignedCard: cardName || null,
-            };
-          }
-          return visitor; // Keep existing assignedCard if already set
-        })
-      );
-    } catch (error) {
-      console.error('Error fetching visitor card assignments:', error);
-    }
-  }, [user]);
-
   // Fetch card assignments when approved visitors change
   // Only fetch if ALL visitors have null/undefined assignedCard (initial load scenario)
   useEffect(() => {
@@ -787,34 +857,6 @@ export default function AdminPage() {
     .sort((a, b) => a.card_name.localeCompare(b.card_name));
 
   const occupiedCards = icards.filter((card) => card.occ_status);
-
-  // Filter visitors by selected date
-  const filteredByDate = useMemo(() => {
-    // If "Show All Visitors" is enabled, return all visitors without date filtering
-    if (showAllVisitors) {
-      return approvedVisitors;
-    }
-
-    return approvedVisitors.filter((visitor) => {
-      if (!selectedDate) return true;
-
-      try {
-        const visitorDate = parseISO(visitor.submittedAt);
-        const filterDate = parseISO(selectedDate);
-        return isSameDay(visitorDate, filterDate);
-      } catch (error) {
-        console.error('Error parsing date:', error);
-        return false;
-      }
-    });
-  }, [approvedVisitors, selectedDate, showAllVisitors]);
-
-  // Sort approved visitors by most recent first (based on check-in time)
-  const sortedApprovedVisitors = useMemo(() => {
-    return [...filteredByDate].sort((a, b) => {
-      return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
-    });
-  }, [filteredByDate]);
 
   return (
     <>
@@ -873,6 +915,36 @@ export default function AdminPage() {
               </Button>
             </div>
           </div>
+
+          {/* Warning Banner - All Cards Occupied */}
+          {occupiedCards.length > 0 && availableCards.length === 0 && (
+            <div className="rounded-lg bg-orange-50 border-2 border-orange-300 p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 mt-0.5">
+                  <svg className="h-5 w-5 text-orange-600" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-sm font-semibold text-orange-800">All ICards Are Occupied</h3>
+                  <p className="mt-1 text-sm text-orange-700">
+                    All {occupiedCards.length} ICards are currently marked as occupied. If this is incorrect or you need to free up cards, you can release them all at once.
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <Button
+                      onClick={handleReleaseAllCards}
+                      disabled={isReleasingAll}
+                      variant="outline"
+                      size="sm"
+                      className="bg-white text-orange-700 border-orange-400 hover:bg-orange-100 hover:text-orange-800 font-semibold"
+                    >
+                      {isReleasingAll ? 'Releasing...' : `Release All ${occupiedCards.length} ICards`}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Main Content - Fully Responsive Grid */}
           <div className="grid gap-4 md:gap-6 xl:grid-cols-2">
@@ -1105,13 +1177,55 @@ export default function AdminPage() {
                   {/* Available ICards - Fully Responsive */}
                   {!selectedVisitor.assignedCard && (
                     <div className="rounded-lg border border-border bg-card p-3 sm:p-4 md:p-6">
-                      <h2 className="text-base sm:text-lg md:text-xl font-semibold text-foreground mb-2 sm:mb-3 md:mb-4">
-                        Available ICards ({availableCards.length})
-                      </h2>
+                      <div className="flex items-center justify-between mb-2 sm:mb-3 md:mb-4 gap-3">
+                        <h2 className="text-base sm:text-lg md:text-xl font-semibold text-foreground">
+                          Available ICards ({availableCards.length})
+                        </h2>
+                        {occupiedCards.length > 0 && (
+                          <Button
+                            onClick={handleReleaseAllCards}
+                            disabled={isReleasingAll}
+                            variant="outline"
+                            size="sm"
+                            className="text-xs sm:text-sm text-orange-700 border-orange-400 hover:bg-orange-50 font-semibold flex-shrink-0"
+                          >
+                            {isReleasingAll ? 'Releasing...' : `Release All (${occupiedCards.length})`}
+                          </Button>
+                        )}
+                      </div>
                     {availableCards.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        No ICards available. All cards are currently occupied.
-                      </p>
+                      <div className="space-y-3">
+                        {icards.length === 0 ? (
+                          <div className="rounded-lg bg-gray-50 border border-gray-200 p-4">
+                            <p className="text-sm text-gray-700 font-medium">No ICards found in the system.</p>
+                            <p className="text-xs text-gray-600 mt-1">
+                              Please check:
+                            </p>
+                            <ul className="text-xs text-gray-600 mt-2 ml-4 list-disc space-y-1">
+                              <li>Backend is running and connected</li>
+                              <li>ICards are configured in the database</li>
+                              <li>Check browser console for errors</li>
+                            </ul>
+                          </div>
+                        ) : (
+                          <div className="rounded-lg bg-orange-50 border border-orange-200 p-3 space-y-2">
+                            <p className="text-sm text-orange-800">
+                              <strong>All {occupiedCards.length} ICards are currently occupied.</strong>
+                              <br />
+                              If this is incorrect, you can release them all at once:
+                            </p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleReleaseAllCards}
+                              disabled={isReleasingAll}
+                              className="w-full text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/50 font-semibold"
+                            >
+                              {isReleasingAll ? 'Releasing all cards...' : 'Release All ICards'}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <div className="space-y-1 sm:space-y-1.5 md:space-y-2 max-h-[250px] sm:max-h-[300px] md:max-h-[400px] overflow-y-auto">
                         {availableCards.map((card) => (
