@@ -1,8 +1,9 @@
 'use client';
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { PersonToMeet } from './types';
 import { API_ENDPOINTS } from './api-config';
+
+const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
 
 type AuthUser = {
   username: string;
@@ -14,6 +15,7 @@ type AuthUser = {
   admin: boolean;
   is_active: boolean;
   access_token: string;
+  session_created_at?: number; // timestamp when session was created
 };
 
 type AuthContextType = {
@@ -21,6 +23,7 @@ type AuthContextType = {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (username: string, password: string) => Promise<boolean>;
+  identify: (fullName: string) => Promise<boolean>;
   logout: () => void;
 };
 
@@ -30,13 +33,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Check for stored auth on mount
+  // Check for stored auth on mount + validate 7-day session expiry
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const storedUser = localStorage.getItem('auth_user');
       if (storedUser) {
         try {
-          setUser(JSON.parse(storedUser));
+          const parsed: AuthUser = JSON.parse(storedUser);
+
+          // Check if session has expired (7 days)
+          if (parsed.session_created_at) {
+            const elapsed = Date.now() - parsed.session_created_at;
+            if (elapsed > SESSION_DURATION_MS) {
+              // Session expired - clear it
+              localStorage.removeItem('auth_user');
+              setIsLoading(false);
+              return;
+            }
+          }
+
+          setUser(parsed);
         } catch (e) {
           localStorage.removeItem('auth_user');
         }
@@ -45,58 +61,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const login = useCallback(async (username: string, password: string): Promise<boolean> => {
+  // Identify by full name (no password) - for approver dashboard
+  const identify = useCallback(async (fullName: string): Promise<boolean> => {
     try {
-      const requestBody = {
-        username,
-        password,
-      };
-
-      console.log('[Auth] Login request:', {
-        url: API_ENDPOINTS.auth.login,
-        username: username,
-        hasPassword: !!password,
-      });
-
-      const response = await fetch(API_ENDPOINTS.auth.login, {
+      const response = await fetch(API_ENDPOINTS.auth.identify, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'accept': 'application/json',
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify({ name: fullName }),
       });
 
       if (!response.ok) {
-        let errorMessage = 'Invalid username or password';
-        let errorDetails: any = {
-          status: response.status,
-          statusText: response.statusText,
-          url: API_ENDPOINTS.auth.login,
-        };
-        
+        let errorMessage = 'Employee not found';
         try {
-          const errorText = await response.text();
-          if (errorText) {
-            try {
-              const errorData = JSON.parse(errorText);
-              errorMessage = errorData.detail || errorData.message || errorMessage;
-              errorDetails.errorData = errorData;
-            } catch (parseError) {
-              errorDetails.rawError = errorText;
-              errorMessage = errorText || errorMessage;
-            }
-          }
-          errorDetails.errorMessage = errorMessage;
-          console.error('Login failed:', errorDetails);
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorMessage;
         } catch (e) {
-          console.error('Login failed - could not parse error:', {
-            exception: e,
-            status: response.status,
-            statusText: response.statusText,
-            url: API_ENDPOINTS.auth.login,
-          });
+          // ignore parse errors
         }
+        console.error('[Auth] Identify failed:', errorMessage);
         return false;
       }
 
@@ -107,11 +92,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         email: data.approver.email,
         name: data.approver.name,
         id: data.approver.id,
-        ph_no: data.approver.ph_no || '',  // Handle null ph_no for admin users
+        ph_no: data.approver.ph_no || '',
         superuser: data.approver.superuser || false,
         admin: data.approver.admin || false,
         is_active: data.approver.is_active !== undefined ? data.approver.is_active : true,
         access_token: data.access_token,
+        session_created_at: Date.now(),
       };
 
       setUser(authUser);
@@ -120,14 +106,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       return true;
     } catch (error) {
-      console.error('[Auth] Login error:', {
-        error: error instanceof Error ? error.message : String(error),
-        url: API_ENDPOINTS.auth.login,
-        type: error instanceof TypeError ? 'NetworkError' : 'UnknownError',
+      console.error('[Auth] Identify error:', error);
+      return false;
+    }
+  }, []);
+
+  // Login with username & password (kept for admin login)
+  const login = useCallback(async (username: string, password: string): Promise<boolean> => {
+    try {
+      const response = await fetch(API_ENDPOINTS.auth.login, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'accept': 'application/json',
+        },
+        body: JSON.stringify({ username, password }),
       });
-      if (error instanceof TypeError && error.message.includes('fetch')) {
-        console.error('[Auth] Network error - Backend may not be running or URL is incorrect');
+
+      if (!response.ok) {
+        return false;
       }
+
+      const data = await response.json();
+
+      const authUser: AuthUser = {
+        username: data.approver.username,
+        email: data.approver.email,
+        name: data.approver.name,
+        id: data.approver.id,
+        ph_no: data.approver.ph_no || '',
+        superuser: data.approver.superuser || false,
+        admin: data.approver.admin || false,
+        is_active: data.approver.is_active !== undefined ? data.approver.is_active : true,
+        access_token: data.access_token,
+        session_created_at: Date.now(),
+      };
+
+      setUser(authUser);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('auth_user', JSON.stringify(authUser));
+      }
+      return true;
+    } catch (error) {
+      console.error('[Auth] Login error:', error);
       return false;
     }
   }, []);
@@ -146,6 +167,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated: !!user,
         isLoading,
         login,
+        identify,
         logout,
       }}
     >
@@ -161,4 +183,3 @@ export function useAuth() {
   }
   return context;
 }
-

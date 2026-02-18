@@ -54,6 +54,7 @@ export const API_ENDPOINTS = {
   appointments: `${API_URL}/api/appointments`,
   auth: {
     login: `${API_URL}/api/approvers/login`,
+    identify: `${API_URL}/api/approvers/identify`,
     forgotPassword: `${API_URL}/api/approvers/forgot-password`,
   },
 } as const;

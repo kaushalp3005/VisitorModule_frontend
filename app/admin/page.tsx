@@ -875,7 +875,7 @@ export default function AdminPage() {
               className="text-xs md:text-sm h-8 md:h-9 px-2 md:px-4"
               onClick={() => {
                 logout();
-                router.push('/login');
+                router.push('/admin/login');
               }}
             >
               Logout
