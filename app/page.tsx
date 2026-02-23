@@ -7,6 +7,8 @@ import { AppHeader } from '@/components/app-header';
 import { PageContainer } from '@/components/page-container';
 import { VisitorForm } from '@/components/visitor-form';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
 import { Toast, useToast } from '@/components/toast';
 import { useVisitors } from '@/lib/visitor-store';
 import { API_ENDPOINTS } from '@/lib/api-config';
@@ -63,6 +65,15 @@ export default function VisitorCheckInPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [warehouseName, setWarehouseName] = useState<string>('');
 
+  // Revisit flow state
+  const [showRevisitDialog, setShowRevisitDialog] = useState(false);
+  const [revisitPhone, setRevisitPhone] = useState('');
+  const [revisitStep, setRevisitStep] = useState<'phone' | 'otp'>('phone');
+  const [otpValue, setOtpValue] = useState('');
+  const [revisitLoading, setRevisitLoading] = useState(false);
+  const [revisitError, setRevisitError] = useState('');
+  const [otpCooldown, setOtpCooldown] = useState(0);
+
   // Check URL parameters on mount for warehouse from QR code scan
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -75,6 +86,78 @@ export default function VisitorCheckInPage() {
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, [addToast]);
+
+  // Revisit OTP handlers
+  const handleSendOTP = async () => {
+    setRevisitError('');
+    if (!/^\d{10}$/.test(revisitPhone)) {
+      setRevisitError('Please enter a valid 10-digit mobile number');
+      return;
+    }
+    setRevisitLoading(true);
+    try {
+      const response = await fetch(`${API_ENDPOINTS.visitors}/send-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile_number: revisitPhone }),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.detail || 'Failed to send OTP');
+      }
+      setRevisitStep('otp');
+      setOtpCooldown(60);
+      addToast('OTP sent to your mobile number', 'success');
+    } catch (error) {
+      setRevisitError(error instanceof Error ? error.message : 'Failed to send OTP');
+    } finally {
+      setRevisitLoading(false);
+    }
+  };
+
+  const handleVerifyOTP = async (otpVal: string) => {
+    if (otpVal.length !== 4) return;
+    setRevisitError('');
+    setRevisitLoading(true);
+    try {
+      const response = await fetch(`${API_ENDPOINTS.visitors}/verify-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile_number: revisitPhone, otp: otpVal }),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.detail || 'OTP verification failed');
+      }
+      addToast('Phone verified! Loading your details...', 'success');
+      router.push(`/revisit?phone=${encodeURIComponent(revisitPhone)}`);
+    } catch (error) {
+      setRevisitError(error instanceof Error ? error.message : 'Verification failed');
+      setOtpValue('');
+    } finally {
+      setRevisitLoading(false);
+    }
+  };
+
+  // Cooldown timer for resend
+  useEffect(() => {
+    if (otpCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setOtpCooldown((prev) => prev - 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [otpCooldown]);
+
+  const handleRevisitDialogClose = (open: boolean) => {
+    setShowRevisitDialog(open);
+    if (!open) {
+      setRevisitStep('phone');
+      setRevisitPhone('');
+      setOtpValue('');
+      setRevisitError('');
+      setRevisitLoading(false);
+    }
+  };
 
   const handleFormSubmit = async (formData: VisitorFormData) => {
     setIsLoading(true);
@@ -433,7 +516,21 @@ export default function VisitorCheckInPage() {
                         </div>
                       </div>
                     )}
-                    <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-6 sm:mb-8">Register as Visitor</h2>
+                    <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-4">Register as Visitor</h2>
+
+                    {/* Revisit CTA */}
+                    <div className="mb-6 sm:mb-8 flex items-center gap-3 p-3 rounded-lg bg-blue-50 border border-blue-200">
+                      <span className="text-sm text-blue-700 font-medium">Visited us before?</span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="text-blue-600 border-blue-300 hover:bg-blue-100 text-xs"
+                        onClick={() => setShowRevisitDialog(true)}
+                      >
+                        Yes, Quick Check-in
+                      </Button>
+                    </div>
                     <VisitorForm onSubmit={handleFormSubmit} isLoading={isLoading} warehouseName={warehouseName} />
                   </>
                 )}
@@ -451,6 +548,105 @@ export default function VisitorCheckInPage() {
           onClose={() => removeToast(toast.id)}
         />
       ))}
+
+      {/* Revisit Phone Verification Dialog */}
+      <Dialog open={showRevisitDialog} onOpenChange={handleRevisitDialogClose}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {revisitStep === 'phone' ? 'Verify Your Phone Number' : 'Enter OTP'}
+            </DialogTitle>
+            <DialogDescription>
+              {revisitStep === 'phone'
+                ? 'Enter the mobile number you used during your previous visit.'
+                : `We sent a 4-digit OTP to ${revisitPhone.slice(0, 3)}****${revisitPhone.slice(7)}`}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {revisitStep === 'phone' ? (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Mobile Number
+                  </label>
+                  <input
+                    type="tel"
+                    value={revisitPhone}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                      setRevisitPhone(val);
+                      setRevisitError('');
+                    }}
+                    placeholder="Enter 10-digit mobile number"
+                    className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    maxLength={10}
+                  />
+                </div>
+                {revisitError && (
+                  <p className="text-sm text-red-600">{revisitError}</p>
+                )}
+                <Button
+                  onClick={handleSendOTP}
+                  disabled={revisitLoading || revisitPhone.length !== 10}
+                  className="w-full bg-[#7a2e2e] text-white hover:bg-[#8a3e3e] h-11"
+                >
+                  {revisitLoading ? 'Sending OTP...' : 'Send OTP'}
+                </Button>
+              </>
+            ) : (
+              <>
+                <div className="flex justify-center">
+                  <InputOTP
+                    maxLength={4}
+                    value={otpValue}
+                    onChange={(val) => {
+                      setOtpValue(val);
+                      if (val.length === 4) {
+                        handleVerifyOTP(val);
+                      }
+                    }}
+                  >
+                    <InputOTPGroup>
+                      <InputOTPSlot index={0} className="w-12 h-12 text-lg" />
+                      <InputOTPSlot index={1} className="w-12 h-12 text-lg" />
+                      <InputOTPSlot index={2} className="w-12 h-12 text-lg" />
+                      <InputOTPSlot index={3} className="w-12 h-12 text-lg" />
+                    </InputOTPGroup>
+                  </InputOTP>
+                </div>
+                {revisitError && (
+                  <p className="text-sm text-red-600 text-center">{revisitError}</p>
+                )}
+                {revisitLoading && (
+                  <p className="text-sm text-gray-500 text-center">Verifying...</p>
+                )}
+                <div className="flex justify-between items-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRevisitStep('phone');
+                      setOtpValue('');
+                      setRevisitError('');
+                    }}
+                    className="text-sm text-gray-500 hover:text-gray-700 underline"
+                  >
+                    Change number
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSendOTP}
+                    disabled={otpCooldown > 0 || revisitLoading}
+                    className="text-sm text-blue-600 hover:text-blue-800 disabled:text-gray-400 underline"
+                  >
+                    {otpCooldown > 0 ? `Resend in ${otpCooldown}s` : 'Resend OTP'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
