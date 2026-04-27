@@ -223,6 +223,8 @@ export default function VisitorCheckInPage() {
       const response = await fetch(`${API_ENDPOINTS.visitors}/check-in-with-image`, {
         method: 'POST',
         body: formDataToSend,
+        // Cap kiosk hangs on slow networks — fail loudly after 30 s.
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (!response.ok) {
@@ -286,7 +288,13 @@ export default function VisitorCheckInPage() {
     } catch (error) {
       // More detailed error message
       let errorMessage = 'Failed to submit request. ';
-      if (error instanceof TypeError && error.message.includes('fetch')) {
+      if (
+        error instanceof DOMException &&
+        (error.name === 'TimeoutError' || error.name === 'AbortError')
+      ) {
+        errorMessage =
+          'Upload timed out. Please check your connection and try again.';
+      } else if (error instanceof TypeError && error.message.includes('fetch')) {
         errorMessage += 'Cannot connect to server. Please check if the backend is running on http://localhost:8000';
       } else if (error instanceof Error) {
         errorMessage += error.message;
