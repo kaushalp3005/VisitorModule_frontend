@@ -383,27 +383,49 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
       const canvas = canvasRef.current;
       const context = canvas.getContext('2d');
 
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+      if (!context || !video.videoWidth) return;
 
-      if (context) {
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imageData = canvas.toDataURL('image/jpeg', 0.8);
+      // Cap longest edge at 1024 px and re-encode at 0.85 JPEG quality —
+      // Meta's WhatsApp /media endpoint rejects images > 5 MB.
+      const SELFIE_MAX_DIM = 1024;
+      const SELFIE_JPEG_QUALITY = 0.85;
+      const SELFIE_MAX_BYTES = 5 * 1024 * 1024;
 
-        setFormData((prev) => ({
+      const scale = Math.min(
+        1,
+        SELFIE_MAX_DIM / Math.max(video.videoWidth, video.videoHeight)
+      );
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = canvas.toDataURL('image/jpeg', SELFIE_JPEG_QUALITY);
+
+      // base64 payload is ~4/3 the byte size; the prefix is small, so
+      // length * 0.75 is a safe upper-bound on the underlying bytes.
+      if (imageData.length * 0.75 > SELFIE_MAX_BYTES) {
+        setErrors((prev) => ({
           ...prev,
-          selfie: imageData,
+          selfie:
+            'Captured photo is too large to send. Please retake in better lighting.',
         }));
-
-        if (errors.selfie) {
-          setErrors((prev) => ({
-            ...prev,
-            selfie: undefined,
-          }));
-        }
-
         stopCamera();
+        return;
       }
+
+      setFormData((prev) => ({
+        ...prev,
+        selfie: imageData,
+      }));
+
+      if (errors.selfie) {
+        setErrors((prev) => ({
+          ...prev,
+          selfie: undefined,
+        }));
+      }
+
+      stopCamera();
     }
   };
 
