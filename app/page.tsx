@@ -7,8 +7,6 @@ import { AppHeader } from '@/components/app-header';
 import { PageContainer } from '@/components/page-container';
 import { VisitorForm } from '@/components/visitor-form';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
 import { Toast, useToast } from '@/components/toast';
 import { useVisitors } from '@/lib/visitor-store';
 import { API_ENDPOINTS } from '@/lib/api-config';
@@ -65,14 +63,97 @@ export default function VisitorCheckInPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [warehouseName, setWarehouseName] = useState<string>('');
 
-  // Revisit flow state
-  const [showRevisitDialog, setShowRevisitDialog] = useState(false);
+  // "Visited us before?" prompt. Returning visitors enter their phone, receive a
+  // WhatsApp OTP (visitor_revisit_otp template), enter the OTP, and are then
+  // routed to /revisit where prior details are pre-filled.
+  //
+  //   asking    → show the Yes/No question
+  //   phone     → show the phone-number input
+  //   otp       → OTP was sent; show the code input
+  //   declined  → user said "first time"; hide the prompt
+  const [revisitPrompt, setRevisitPrompt] = useState<'asking' | 'phone' | 'otp' | 'declined'>('asking');
   const [revisitPhone, setRevisitPhone] = useState('');
-  const [revisitStep, setRevisitStep] = useState<'phone' | 'otp'>('phone');
-  const [otpValue, setOtpValue] = useState('');
-  const [revisitLoading, setRevisitLoading] = useState(false);
-  const [revisitError, setRevisitError] = useState('');
-  const [otpCooldown, setOtpCooldown] = useState(0);
+  const [revisitOtp, setRevisitOtp] = useState('');
+  const [revisitVerifiedPhone, setRevisitVerifiedPhone] = useState('');
+  const [revisitError, setRevisitError] = useState<string | null>(null);
+  const [revisitInfo, setRevisitInfo] = useState<string | null>(null);
+  const [revisitBusy, setRevisitBusy] = useState(false);
+
+  const handleSendRevisitOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleaned = revisitPhone.replace(/\D/g, '');
+    if (cleaned.length < 10) {
+      setRevisitError('Please enter a valid 10-digit mobile number.');
+      return;
+    }
+    const phone = cleaned.slice(-10);
+    setRevisitBusy(true);
+    setRevisitError(null);
+    setRevisitInfo(null);
+    try {
+      const res = await fetch(`${API_ENDPOINTS.visitors}/send-revisit-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 404) {
+        setRevisitError(
+          'No previous visit found for this number. Please register as a first-time visitor below.'
+        );
+        return;
+      }
+      if (!res.ok) {
+        setRevisitError(body.detail || body.error || 'Could not send the OTP. Please try again.');
+        return;
+      }
+      setRevisitVerifiedPhone(phone);
+      setRevisitPrompt('otp');
+      setRevisitOtp('');
+      setRevisitInfo(body.message || 'OTP sent to your WhatsApp.');
+    } catch {
+      setRevisitError('Cannot reach the server. Please check your connection and try again.');
+    } finally {
+      setRevisitBusy(false);
+    }
+  };
+
+  const handleVerifyRevisitOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = revisitOtp.trim();
+    if (code.length < 4) {
+      setRevisitError('Please enter the code you received on WhatsApp.');
+      return;
+    }
+    setRevisitBusy(true);
+    setRevisitError(null);
+    try {
+      const res = await fetch(`${API_ENDPOINTS.visitors}/verify-revisit-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: revisitVerifiedPhone, otp: code }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRevisitError(body.detail || body.error || 'Verification failed.');
+        return;
+      }
+      router.push(`/revisit?phone=${revisitVerifiedPhone}`);
+    } catch {
+      setRevisitError('Cannot reach the server. Please try again.');
+    } finally {
+      setRevisitBusy(false);
+    }
+  };
+
+  const handleRevisitCancel = () => {
+    setRevisitPrompt('asking');
+    setRevisitPhone('');
+    setRevisitOtp('');
+    setRevisitVerifiedPhone('');
+    setRevisitError(null);
+    setRevisitInfo(null);
+  };
 
   // Check URL parameters on mount for warehouse from QR code scan
   useEffect(() => {
@@ -86,78 +167,6 @@ export default function VisitorCheckInPage() {
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, [addToast]);
-
-  // Revisit OTP handlers
-  const handleSendOTP = async () => {
-    setRevisitError('');
-    if (!/^\d{10}$/.test(revisitPhone)) {
-      setRevisitError('Please enter a valid 10-digit mobile number');
-      return;
-    }
-    setRevisitLoading(true);
-    try {
-      const response = await fetch(`${API_ENDPOINTS.visitors}/send-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile_number: revisitPhone }),
-      });
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || 'Failed to send OTP');
-      }
-      setRevisitStep('otp');
-      setOtpCooldown(60);
-      addToast('OTP sent to your mobile number', 'success');
-    } catch (error) {
-      setRevisitError(error instanceof Error ? error.message : 'Failed to send OTP');
-    } finally {
-      setRevisitLoading(false);
-    }
-  };
-
-  const handleVerifyOTP = async (otpVal: string) => {
-    if (otpVal.length !== 4) return;
-    setRevisitError('');
-    setRevisitLoading(true);
-    try {
-      const response = await fetch(`${API_ENDPOINTS.visitors}/verify-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile_number: revisitPhone, otp: otpVal }),
-      });
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || 'OTP verification failed');
-      }
-      addToast('Phone verified! Loading your details...', 'success');
-      router.push(`/revisit?phone=${encodeURIComponent(revisitPhone)}`);
-    } catch (error) {
-      setRevisitError(error instanceof Error ? error.message : 'Verification failed');
-      setOtpValue('');
-    } finally {
-      setRevisitLoading(false);
-    }
-  };
-
-  // Cooldown timer for resend
-  useEffect(() => {
-    if (otpCooldown <= 0) return;
-    const timer = setInterval(() => {
-      setOtpCooldown((prev) => prev - 1);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [otpCooldown]);
-
-  const handleRevisitDialogClose = (open: boolean) => {
-    setShowRevisitDialog(open);
-    if (!open) {
-      setRevisitStep('phone');
-      setRevisitPhone('');
-      setOtpValue('');
-      setRevisitError('');
-      setRevisitLoading(false);
-    }
-  };
 
   const handleFormSubmit = async (formData: VisitorFormData) => {
     setIsLoading(true);
@@ -516,21 +525,173 @@ export default function VisitorCheckInPage() {
                         </div>
                       </div>
                     )}
-                    <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-4">Register as Visitor</h2>
 
-                    {/* Revisit CTA */}
-                    <div className="mb-6 sm:mb-8 flex items-center gap-3 p-3 rounded-lg bg-blue-50 border border-blue-200">
-                      <span className="text-sm text-blue-700 font-medium">Visited us before?</span>
-                      <Button
+                    {/* Visited us before? — sends a WhatsApp OTP, verifies it, then routes to /revisit */}
+                    {revisitPrompt !== 'declined' && (
+                      <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50/60 p-4 sm:p-5">
+                        {revisitPrompt === 'asking' && (
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <div className="flex items-start gap-3">
+                              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-white">
+                                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                              </div>
+                              <div>
+                                <p className="font-semibold text-gray-900 text-sm sm:text-base">Have you visited us before?</p>
+                                <p className="text-xs sm:text-sm text-gray-600 mt-0.5">Skip the form — we'll fetch your details from your last visit. We'll send a one-time code to your WhatsApp to verify.</p>
+                              </div>
+                            </div>
+                            <div className="flex gap-2 sm:flex-shrink-0">
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => { setRevisitPrompt('phone'); setRevisitError(null); setRevisitInfo(null); }}
+                                className="bg-blue-600 text-white hover:bg-blue-700 h-9"
+                              >
+                                Yes — Quick Check-in
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setRevisitPrompt('declined')}
+                                className="h-9"
+                              >
+                                No, first time
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        {revisitPrompt === 'phone' && (
+                          <form onSubmit={handleSendRevisitOtp} className="space-y-3">
+                            <div className="flex items-start gap-3">
+                              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-white">
+                                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                                </svg>
+                              </div>
+                              <div className="flex-1">
+                                <p className="font-semibold text-gray-900 text-sm sm:text-base">Enter your mobile number</p>
+                                <p className="text-xs text-gray-600 mt-0.5">We'll send a one-time code on WhatsApp to confirm it's you.</p>
+                              </div>
+                            </div>
+                            <div className="flex flex-col sm:flex-row gap-2">
+                              <input
+                                type="tel"
+                                inputMode="numeric"
+                                autoFocus
+                                value={revisitPhone}
+                                onChange={(e) => { setRevisitPhone(e.target.value); if (revisitError) setRevisitError(null); }}
+                                placeholder="10-digit mobile number"
+                                maxLength={15}
+                                disabled={revisitBusy}
+                                className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                              <Button
+                                type="submit"
+                                size="sm"
+                                disabled={revisitBusy}
+                                className="bg-blue-600 text-white hover:bg-blue-700 h-10 px-5"
+                              >
+                                {revisitBusy ? 'Sending…' : 'Send OTP'}
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={revisitBusy}
+                                onClick={handleRevisitCancel}
+                                className="h-10"
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                            {revisitError && (
+                              <p className="text-xs text-red-600 ml-12">{revisitError}</p>
+                            )}
+                          </form>
+                        )}
+
+                        {revisitPrompt === 'otp' && (
+                          <form onSubmit={handleVerifyRevisitOtp} className="space-y-3">
+                            <div className="flex items-start gap-3">
+                              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-green-600 text-white">
+                                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                </svg>
+                              </div>
+                              <div className="flex-1">
+                                <p className="font-semibold text-gray-900 text-sm sm:text-base">Enter the OTP</p>
+                                <p className="text-xs text-gray-600 mt-0.5">
+                                  {revisitInfo || `Code sent to your WhatsApp at ${revisitVerifiedPhone}.`}
+                                  {' '}It expires in 5 minutes.
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex flex-col sm:flex-row gap-2">
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                autoFocus
+                                value={revisitOtp}
+                                onChange={(e) => { setRevisitOtp(e.target.value.replace(/\D/g, '').slice(0, 6)); if (revisitError) setRevisitError(null); }}
+                                placeholder="6-digit code"
+                                maxLength={6}
+                                disabled={revisitBusy}
+                                className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm bg-white tracking-widest font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                              <Button
+                                type="submit"
+                                size="sm"
+                                disabled={revisitBusy || revisitOtp.length < 4}
+                                className="bg-blue-600 text-white hover:bg-blue-700 h-10 px-5"
+                              >
+                                {revisitBusy ? 'Verifying…' : 'Verify & Continue'}
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={revisitBusy}
+                                onClick={handleRevisitCancel}
+                                className="h-10"
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                            <div className="flex items-center justify-between ml-12">
+                              {revisitError ? (
+                                <p className="text-xs text-red-600">{revisitError}</p>
+                              ) : (
+                                <span />
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => { setRevisitPrompt('phone'); setRevisitOtp(''); setRevisitError(null); setRevisitInfo(null); }}
+                                disabled={revisitBusy}
+                                className="text-xs text-blue-600 hover:text-blue-800 underline disabled:opacity-50"
+                              >
+                                Resend / change number
+                              </button>
+                            </div>
+                          </form>
+                        )}
+                      </div>
+                    )}
+
+                    {revisitPrompt === 'declined' && (
+                      <button
                         type="button"
-                        variant="outline"
-                        size="sm"
-                        className="text-blue-600 border-blue-300 hover:bg-blue-100 text-xs"
-                        onClick={() => setShowRevisitDialog(true)}
+                        onClick={() => setRevisitPrompt('asking')}
+                        className="mb-4 text-xs text-gray-500 hover:text-blue-600 underline"
                       >
-                        Yes, Quick Check-in
-                      </Button>
-                    </div>
+                        Already visited us? Quick check-in
+                      </button>
+                    )}
+
+                    <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-6 sm:mb-8">Register as Visitor</h2>
                     <VisitorForm onSubmit={handleFormSubmit} isLoading={isLoading} warehouseName={warehouseName} />
                   </>
                 )}
@@ -548,105 +709,6 @@ export default function VisitorCheckInPage() {
           onClose={() => removeToast(toast.id)}
         />
       ))}
-
-      {/* Revisit Phone Verification Dialog */}
-      <Dialog open={showRevisitDialog} onOpenChange={handleRevisitDialogClose}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              {revisitStep === 'phone' ? 'Verify Your Phone Number' : 'Enter OTP'}
-            </DialogTitle>
-            <DialogDescription>
-              {revisitStep === 'phone'
-                ? 'Enter the mobile number you used during your previous visit.'
-                : `We sent a 4-digit OTP to ${revisitPhone.slice(0, 3)}****${revisitPhone.slice(7)}`}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            {revisitStep === 'phone' ? (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Mobile Number
-                  </label>
-                  <input
-                    type="tel"
-                    value={revisitPhone}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '').slice(0, 10);
-                      setRevisitPhone(val);
-                      setRevisitError('');
-                    }}
-                    placeholder="Enter 10-digit mobile number"
-                    className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    maxLength={10}
-                  />
-                </div>
-                {revisitError && (
-                  <p className="text-sm text-red-600">{revisitError}</p>
-                )}
-                <Button
-                  onClick={handleSendOTP}
-                  disabled={revisitLoading || revisitPhone.length !== 10}
-                  className="w-full bg-[#7a2e2e] text-white hover:bg-[#8a3e3e] h-11"
-                >
-                  {revisitLoading ? 'Sending OTP...' : 'Send OTP'}
-                </Button>
-              </>
-            ) : (
-              <>
-                <div className="flex justify-center">
-                  <InputOTP
-                    maxLength={4}
-                    value={otpValue}
-                    onChange={(val) => {
-                      setOtpValue(val);
-                      if (val.length === 4) {
-                        handleVerifyOTP(val);
-                      }
-                    }}
-                  >
-                    <InputOTPGroup>
-                      <InputOTPSlot index={0} className="w-12 h-12 text-lg" />
-                      <InputOTPSlot index={1} className="w-12 h-12 text-lg" />
-                      <InputOTPSlot index={2} className="w-12 h-12 text-lg" />
-                      <InputOTPSlot index={3} className="w-12 h-12 text-lg" />
-                    </InputOTPGroup>
-                  </InputOTP>
-                </div>
-                {revisitError && (
-                  <p className="text-sm text-red-600 text-center">{revisitError}</p>
-                )}
-                {revisitLoading && (
-                  <p className="text-sm text-gray-500 text-center">Verifying...</p>
-                )}
-                <div className="flex justify-between items-center">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRevisitStep('phone');
-                      setOtpValue('');
-                      setRevisitError('');
-                    }}
-                    className="text-sm text-gray-500 hover:text-gray-700 underline"
-                  >
-                    Change number
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSendOTP}
-                    disabled={otpCooldown > 0 || revisitLoading}
-                    className="text-sm text-blue-600 hover:text-blue-800 disabled:text-gray-400 underline"
-                  >
-                    {otpCooldown > 0 ? `Resend in ${otpCooldown}s` : 'Resend OTP'}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }

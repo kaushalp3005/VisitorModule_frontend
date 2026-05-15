@@ -39,14 +39,18 @@ export default function VisitorPassPage() {
   const [personToMeetName, setPersonToMeetName] = useState<string>('');
   const [hasShownToast, setHasShownToast] = useState(false);
 
-  // Fetch visitor details
-  const fetchVisitorDetails = async () => {
+  // Fetch visitor details.
+  //   silent=true → polling tick: don't toggle the page-level spinner, don't
+  //                 surface the error in the UI, and downgrade transient network
+  //                 hiccups (Lambda cold starts) to a debug log so the console
+  //                 doesn't fill with "Failed to fetch" errors mid-session.
+  const fetchVisitorDetails = async (silent = false) => {
     if (!visitorId) return;
 
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const response = await fetch(`${API_ENDPOINTS.visitors}/${visitorId}`);
-      
+
       if (!response.ok) {
         if (response.status === 404) {
           throw new Error('Visitor not found');
@@ -57,7 +61,7 @@ export default function VisitorPassPage() {
       const data = await response.json();
       setVisitor(data);
 
-      // Fetch approver name
+      // Fetch approver name (best-effort)
       try {
         const approverResponse = await fetch(`${API_ENDPOINTS.approvers}/${data.person_to_meet}`);
         if (approverResponse.ok) {
@@ -66,33 +70,46 @@ export default function VisitorPassPage() {
         } else {
           setPersonToMeetName(data.person_to_meet);
         }
-      } catch (err) {
+      } catch {
         setPersonToMeetName(data.person_to_meet);
       }
     } catch (err) {
-      console.error('Error fetching visitor:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load visitor details');
+      if (silent) {
+        // Network blip / cold-start retry — caller will try again on the next tick.
+        if (process.env.NODE_ENV === 'development') {
+          console.debug('[visitor-pass] poll failed (will retry):', err);
+        }
+      } else {
+        console.error('Error fetching visitor:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load visitor details');
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
+  // Stop polling once the visitor record is finalised (APPROVED/REJECTED with
+  // an image). Including visitor.status / visitor.img_url in the deps ensures
+  // the effect re-runs and clears the previous interval — without this, a stale
+  // closure makes the gate always true and polling runs forever.
   useEffect(() => {
-    if (visitorId) {
-      // Reset toast state when visitor ID changes
-      setHasShownToast(false);
-      fetchVisitorDetails();
+    if (!visitorId) return;
 
-      // Poll for status updates every 10 seconds if status is WAITING
-      const interval = setInterval(() => {
-        if (visitor?.status === 'WAITING') {
-          fetchVisitorDetails();
-        }
-      }, 10000);
+    setHasShownToast(false);
+    fetchVisitorDetails();
 
-      return () => clearInterval(interval);
-    }
-  }, [visitorId]);
+    const stillNeedsUpdates =
+      !visitor || visitor.status === 'WAITING' || !visitor.img_url;
+
+    if (!stillNeedsUpdates) return;
+
+    const interval = setInterval(() => {
+      fetchVisitorDetails(true);
+    }, 5000);
+
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visitorId, visitor?.status, visitor?.img_url]);
 
   // Show toast notification when visitor data is first loaded
   useEffect(() => {

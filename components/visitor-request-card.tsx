@@ -5,6 +5,7 @@ import { StatusBadge } from './status-badge';
 import { Button } from '@/components/ui/button';
 import { HealthDeclarationDisplay } from './health-declaration-display';
 import { VisitorImage, VisitorThumbnail } from './visitor-image';
+import { generateVisitorPDF } from '@/lib/pdf-generator';
 import { useState } from 'react';
 
 interface VisitorRequestCardProps {
@@ -23,6 +24,33 @@ export function VisitorRequestCard({
   onViewDetails,
 }: VisitorRequestCardProps) {
   const [showDetails, setShowDetails] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleDownloadPDF = async () => {
+    if (isDownloading) return;
+    setIsDownloading(true);
+    try {
+      await generateVisitorPDF(request);
+    } catch (error) {
+      console.error('Failed to generate PDF', error);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const DownloadPDFButton = ({ className = '' }: { className?: string }) => (
+    <Button
+      onClick={handleDownloadPDF}
+      disabled={isDownloading}
+      variant="outline"
+      className={`h-9 md:h-10 lg:h-11 text-xs md:text-sm lg:text-base font-semibold border-blue-300 text-blue-700 hover:bg-blue-50 hover:border-blue-400 disabled:opacity-60 ${className}`}
+    >
+      <svg className="h-3.5 w-3.5 md:h-4 md:w-4 mr-1.5 md:mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v8" />
+      </svg>
+      {isDownloading ? 'Generating...' : 'Download PDF'}
+    </Button>
+  );
 
   const formatTime = (dateString: string) => {
     const date = new Date(dateString);
@@ -216,25 +244,30 @@ export function VisitorRequestCard({
 
         {mode === 'pending' && (
           <div className="flex flex-col gap-2 md:gap-3 pt-2.5 md:pt-4 border-t border-gray-100">
-            <Button
-              onClick={() => onApprove?.(request.id)}
-              className="w-full bg-green-600 text-white hover:bg-green-700 h-9 md:h-10 lg:h-11 text-xs md:text-sm lg:text-base font-semibold shadow-md hover:shadow-lg transition-all"
-            >
-              <svg className="h-4 w-4 md:h-5 md:w-5 mr-1.5 md:mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-              Approve
-            </Button>
-            <Button
-              onClick={() => onReject?.(request.id)}
-              variant="outline"
-              className="w-full text-red-600 border-red-300 hover:bg-red-50 hover:border-red-400 h-9 md:h-10 lg:h-11 text-xs md:text-sm lg:text-base font-semibold"
-            >
-              <svg className="h-4 w-4 md:h-5 md:w-5 mr-1.5 md:mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-              Reject
-            </Button>
+            {onApprove && (
+              <Button
+                onClick={() => onApprove?.(request.id)}
+                className="w-full bg-green-600 text-white hover:bg-green-700 h-9 md:h-10 lg:h-11 text-xs md:text-sm lg:text-base font-semibold shadow-md hover:shadow-lg transition-all"
+              >
+                <svg className="h-4 w-4 md:h-5 md:w-5 mr-1.5 md:mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Approve
+              </Button>
+            )}
+            {onReject && (
+              <Button
+                onClick={() => onReject?.(request.id)}
+                variant="outline"
+                className="w-full text-red-600 border-red-300 hover:bg-red-50 hover:border-red-400 h-9 md:h-10 lg:h-11 text-xs md:text-sm lg:text-base font-semibold"
+              >
+                <svg className="h-4 w-4 md:h-5 md:w-5 mr-1.5 md:mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                Reject
+              </Button>
+            )}
+            <DownloadPDFButton className="w-full" />
             <Button
               onClick={() => setShowDetails(!showDetails)}
               variant="ghost"
@@ -277,6 +310,7 @@ export function VisitorRequestCard({
                 {showDetails ? 'Hide' : 'View'} Details
               </Button>
             </div>
+            <DownloadPDFButton className="w-full" />
           </div>
         )}
 
@@ -288,6 +322,7 @@ export function VisitorRequestCard({
                 <p className="text-xs md:text-sm text-red-800 leading-relaxed">{request.rejectionReason}</p>
               </div>
             )}
+            <DownloadPDFButton className="w-full" />
             <Button
               onClick={() => setShowDetails(!showDetails)}
               variant="ghost"

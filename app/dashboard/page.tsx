@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Toast, useToast } from '@/components/toast';
 import { useAuth } from '@/lib/auth-store';
 import { API_ENDPOINTS } from '@/lib/api-config';
+import { ManageApprovers } from '@/components/manage-approvers';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -23,11 +24,11 @@ export default function DashboardPage() {
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Fetch visitor requests for the logged-in user
-  const fetchRequests = useCallback(async () => {
+  const fetchRequests = useCallback(async (silent = false) => {
     if (!user) return;
 
     try {
-      setIsLoading(true);
+      if (!silent) setIsLoading(true);
 
       const url = `${API_ENDPOINTS.visitors}/`;
 
@@ -121,11 +122,11 @@ export default function DashboardPage() {
   }, [user, addToast, logout]);
 
   // Fetch all visitor requests (for superusers only)
-  const fetchAllRequests = useCallback(async () => {
+  const fetchAllRequests = useCallback(async (silent = false) => {
     if (!user || !user.superuser) return;
 
     try {
-      setIsLoading(true);
+      if (!silent) setIsLoading(true);
 
       // Fetch all visitors - loop through all pages
       let allVisitors: any[] = [];
@@ -313,12 +314,12 @@ export default function DashboardPage() {
       pollingIntervalRef.current = null;
     }
 
-    // Start polling - fetch updates every 10 seconds
+    // Start polling - fetch updates every 10 seconds (silent = no loading spinner)
     // The polling will continue until user logs out or component unmounts
     pollingIntervalRef.current = setInterval(() => {
-      fetchRequests();
+      fetchRequests(true);
       if (user.superuser) {
-        fetchAllRequests();
+        fetchAllRequests(true);
       }
     }, 10000); // Poll every 10 seconds
 
@@ -463,7 +464,7 @@ export default function DashboardPage() {
 
   // Build tabs array based on user permissions
   const tabs = user.superuser
-    ? ['Pending', 'Approved', 'Rejected', 'All Requests']
+    ? ['Pending', 'Approved', 'Rejected', 'All Requests', 'Manage Approvers']
     : ['Pending', 'Approved', 'Rejected'];
 
   return (
@@ -540,7 +541,9 @@ export default function DashboardPage() {
             </div>
 
             {/* Requests Grid */}
-            {isLoading ? (
+            {activeTab === 'Manage Approvers' && user.superuser ? (
+              <ManageApprovers />
+            ) : isLoading ? (
               <div className="bg-white rounded-xl md:rounded-2xl shadow-professional-lg border border-gray-200 p-6 md:p-12 text-center">
                 <div className="inline-block animate-spin rounded-full h-6 w-6 md:h-8 md:w-8 border-2 md:border-4 border-gray-300 border-t-blue-600 mb-3 md:mb-4"></div>
                 <p className="text-xs md:text-sm lg:text-base text-gray-600 font-medium">Loading requests...</p>

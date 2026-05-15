@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: sans-serif; background: #f5f5f5; padding: 20px; }
+h1 { text-align: center; margin-bottom: 10px; color: #333; }
+.actions { text-align: center; margin-bottom: 30px; }
+.actions button { padding: 12px 28px; background: #4f46e5; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 15px; margin: 5px; }
+.actions button:hover { background: #4338ca; }
+.section-title { font-size: 22px; font-weight: bold; color: #4f46e5; margin: 30px 0 15px; padding-left: 10px; border-left: 4px solid #4f46e5; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 20px; margin-bottom: 30px; }
+.card { background: white; border-radius: 10px; padding: 20px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.card h3 { font-size: 18px; margin-bottom: 12px; color: #333; }
+.card .qr { display: flex; justify-content: center; margin-bottom: 12px; }
+.card button { padding: 6px 16px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; }
+.card button:hover { background: #059669; }
+</style>
+</head>
+<body>
+
+<h1>Candor Foods - QR Codes</h1>
+<div class="actions">
+    <button onclick="downloadAll()">⬇ Download All QR Codes</button>
+</div>
+
+<div class="section-title">CU Codes (CU001 - CU005)</div>
+<div class="grid" id="cu-grid"></div>
+
+<div class="section-title">VE Codes (VE001 - VE020)</div>
+<div class="grid" id="ve-grid"></div>
+
+<div class="section-title">VI Codes (VI001 - VI020)</div>
+<div class="grid" id="vi-grid"></div>
+
+<script>
+const codes = {
+    'cu-grid': Array.from({length: 5}, (_, i) => 'CU' + String(i+1).padStart(3, '0')),
+    've-grid': Array.from({length: 20}, (_, i) => 'VE' + String(i+1).padStart(3, '0')),
+    'vi-grid': Array.from({length: 20}, (_, i) => 'VI' + String(i+1).padStart(3, '0'))
+};
+
+Object.entries(codes).forEach(([gridId, list]) => {
+    const grid = document.getElementById(gridId);
+    list.forEach(code => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `<h3>${code}</h3><div class="qr" id="qr-${code}"></div><button onclick="dl('${code}')">Download</button>`;
+        grid.appendChild(card);
+        new QRCode(document.getElementById('qr-' + code), {
+            text: code,
+            width: 160,
+            height: 160,
+            colorDark: "#000000",
+            colorLight: "#ffffff",
+            correctLevel: QRCode.CorrectLevel.H
+        });
+    });
+});
+
+function dl(code) {
+    setTimeout(() => {
+        const img = document.querySelector('#qr-' + code + ' img');
+        if (img) {
+            const a = document.createElement('a');
+            a.download = code + '_QR.png';
+            a.href = img.src;
+            a.click();
+        }
+    }, 100);
+}
+
+function downloadAll() {
+    const allCodes = [...codes['cu-grid'], ...codes['ve-grid'], ...codes['vi-grid']];
+    let i = 0;
+    const interval = setInterval(() => {
+        if (i >= allCodes.length) { clearInterval(interval); return; }
+        dl(allCodes[i]);
+        i++;
+    }, 300);
+}
+</script>
+</body>
+</html>
