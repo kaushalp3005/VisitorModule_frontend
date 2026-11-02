@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AppHeader } from '@/components/app-header';
@@ -13,8 +13,9 @@ import { Toast, useToast } from '@/components/toast';
 import { useAuth } from '@/lib/auth-store';
 import { API_ENDPOINTS } from '@/lib/api-config';
 import { QrScanner } from '@/components/qr-scanner';
+import { RequestsPagination } from '@/components/requests-pagination';
 import { ScanQrCode, RefreshCw, CheckCircle, CalendarDays } from 'lucide-react';
-import { isSameDay, parseISO } from 'date-fns';
+import { addDays, format, parseISO } from 'date-fns';
 
 interface ICard {
   id: number;
@@ -77,13 +78,38 @@ const formatCardName = (cardName: string): string => {
   return cardName;
 };
 
+const PAGE_SIZE = 20;
+const POLL_INTERVAL_MS = 30000;
+
+// Map the API response to the fields this page uses
+const mapVisitor = (visitor: any): Visitor => ({
+  id: visitor.id.toString(),
+  name: visitor.visitor_name,
+  mobileNumber: visitor.mobile_number,
+  email: visitor.email_address,
+  company: visitor.company,
+  personToMeet: {
+    id: visitor.person_to_meet,
+    displayName: visitor.person_to_meet_name || visitor.person_to_meet,
+  },
+  reasonForVisit: visitor.reason_to_visit,
+  status: 'approved',
+  submittedAt: visitor.check_in_time,
+  updatedAt: visitor.updated_at,
+  visitorNumber: visitor.id.toString(),
+  rawId: visitor.id,
+});
+
 export default function AdminPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading, logout } = useAuth();
   const { toasts, addToast, removeToast } = useToast();
-  const [approvedVisitors, setApprovedVisitors] = useState<Visitor[]>([]);
+  const [pageVisitors, setPageVisitors] = useState<Visitor[]>([]);
+  const [totalVisitors, setTotalVisitors] = useState(0);
+  const [withCardTotal, setWithCardTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [icards, setIcards] = useState<ICard[]>([]);
-  const [selectedVisitor, setSelectedVisitor] = useState<Visitor | null>(null);
+  const [selectedVisitorBase, setSelectedVisitor] = useState<Visitor | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAssigning, setIsAssigning] = useState(false);
   const [isReleasingAll, setIsReleasingAll] = useState(false);
@@ -93,216 +119,72 @@ export default function AdminPage() {
   const [isCompleting, setIsCompleting] = useState(false);
 
   // Date filter state
-  const today = useMemo(() => new Date().toISOString().split('T')[0], []); // "YYYY-MM-DD"
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const today = useMemo(() => format(new Date(), 'yyyy-MM-dd'), []); // "YYYY-MM-DD" in local time
+  const [selectedDate, setSelectedDate] = useState(today);
   const [showAllVisitors, setShowAllVisitors] = useState(false);
 
-  // Filter visitors by selected date - MOVED UP to maintain hook order
-  const filteredByDate = useMemo(() => {
-    // If "Show All Visitors" is enabled, return all visitors without date filtering
-    if (showAllVisitors) {
-      return approvedVisitors;
-    }
+  // The loads in progress, if any. A newer load cancels the older one so a slow
+  // response can't overwrite what's on screen.
+  const activeVisitorLoadRef = useRef<AbortController | null>(null);
+  const activeCardLoadRef = useRef<AbortController | null>(null);
 
-    return approvedVisitors.filter((visitor) => {
-      if (!selectedDate) return true;
-
-      try {
-        const visitorDate = parseISO(visitor.submittedAt);
-        const filterDate = parseISO(selectedDate);
-        return isSameDay(visitorDate, filterDate);
-      } catch (error) {
-        console.error('Error parsing date:', error);
-        return false;
+  // Every occupied card records its visitor, so the card list says who holds what
+  const cardByVisitor = useMemo(() => {
+    const cards = new Map<number, string>();
+    icards.forEach((card) => {
+      if (card.occ_status && card.occ_to !== null) {
+        cards.set(card.occ_to, card.icard_name || card.card_name);
       }
     });
-  }, [approvedVisitors, selectedDate, showAllVisitors]);
+    return cards;
+  }, [icards]);
 
-  // Sort approved visitors by most recent first - MOVED UP to maintain hook order
-  const sortedApprovedVisitors = useMemo(() => {
-    return [...filteredByDate].sort((a, b) => {
-      return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
-    });
-  }, [filteredByDate]);
+  const approvedVisitors = useMemo(
+    () => pageVisitors.map((visitor) => ({ ...visitor, assignedCard: cardByVisitor.get(visitor.rawId) ?? null })),
+    [pageVisitors, cardByVisitor]
+  );
 
-  // Fetch all approved visitors
-  const fetchApprovedVisitors = useCallback(async () => {
+  const selectedVisitor = selectedVisitorBase && {
+    ...selectedVisitorBase,
+    assignedCard: cardByVisitor.get(selectedVisitorBase.rawId) ?? null,
+  };
+
+  // Fetch the current page of approved visitors
+  const fetchApprovedVisitors = useCallback(async (silent = false) => {
     if (!user) {
-      console.log('No user found, skipping fetch');
       setIsLoading(false);
       return;
     }
 
-    try {
-      setIsLoading(true);
-      console.log('Fetching visitors with token:', user.access_token?.substring(0, 20) + '...');
-
-      let allVisitors: any[] = [];
-      let currentPage = 1;
-      let totalPages = 1;
-
-      do {
-        const url = `${API_ENDPOINTS.visitors}/?page=${currentPage}&page_size=100`;
-        console.log('Fetching from:', url);
-
-        const response = await fetch(url, {
-          headers: {
-            'Authorization': `Bearer ${user.access_token}`,
-            'accept': 'application/json',
-          },
-        });
-
-        if (!response.ok) {
-          let errorText = '';
-          let errorDetails: any = {};
-          try {
-            errorText = await response.text();
-            try {
-              errorDetails = JSON.parse(errorText);
-            } catch {
-              errorDetails = { detail: errorText || 'Unknown error' };
-            }
-          } catch (e) {
-            errorText = 'Failed to read error response';
-          }
-          
-          console.error('Failed to fetch visitors:', {
-            status: response.status,
-            statusText: response.statusText,
-            body: errorText,
-            errorDetails: errorDetails,
-            url: url,
-          });
-
-          // Check if it's an authentication error
-          if (response.status === 401) {
-            addToast('Authentication failed. Please log in again.', 'error');
-            logout();
-            return;
-          }
-
-          const errorMessage = errorDetails.detail || errorDetails.message || `Failed to fetch visitors: ${response.status} ${response.statusText}`;
-          throw new Error(errorMessage);
-        }
-
-        const data = await response.json();
-        allVisitors = [...allVisitors, ...data.visitors];
-        totalPages = Math.ceil(data.total / 100);
-        currentPage++;
-      } while (currentPage <= totalPages);
-
-      // Get unique approver usernames from approved visitors
-      const approvedVisitors = allVisitors.filter((v: any) => v.status.toLowerCase() === 'approved');
-      const uniqueApprovers = [...new Set(approvedVisitors.map((v: any) => v.person_to_meet))];
-
-      // Fetch approver details for all unique approvers
-      const approverDetailsMap = new Map<string, string>();
-      await Promise.all(
-        uniqueApprovers.map(async (username) => {
-          try {
-            const response = await fetch(`${API_ENDPOINTS.approvers}/${username}`, {
-              headers: {
-                'Authorization': `Bearer ${user.access_token}`,
-                'accept': 'application/json',
-              },
-            });
-            if (response.ok) {
-              const approver = await response.json();
-              approverDetailsMap.set(username, approver.name);
-            } else {
-              approverDetailsMap.set(username, username); // Fallback to username
-            }
-          } catch (error) {
-            console.error(`Error fetching approver ${username}:`, error);
-            approverDetailsMap.set(username, username); // Fallback to username
-          }
-        })
-      );
-
-      // Map approved visitors with approver names (card assignment will be updated separately)
-      const approved = approvedVisitors.map((visitor: any) => ({
-        id: visitor.id.toString(),
-        name: visitor.visitor_name,
-        mobileNumber: visitor.mobile_number,
-        email: visitor.email_address,
-        company: visitor.company,
-        personToMeet: {
-          id: visitor.person_to_meet,
-          displayName: approverDetailsMap.get(visitor.person_to_meet) || visitor.person_to_meet,
-        },
-        reasonForVisit: visitor.reason_to_visit,
-        status: 'approved',
-        submittedAt: visitor.check_in_time,
-        updatedAt: visitor.updated_at,
-        visitorNumber: visitor.id.toString(),
-        rawId: visitor.id,
-        assignedCard: null, // Will be updated when icards are fetched
-      }));
-
-      setApprovedVisitors(approved);
-      
-      // Immediately fetch card assignments after visitors are loaded
-      if (approved.length > 0) {
-        // Fetch card assignments right away for initial load
-        fetchVisitorCardAssignments(approved).catch((err) => {
-          console.error('Error fetching card assignments on initial load:', err);
-        });
-      }
-      
-      return approved; // Return the approved visitors array
-    } catch (error) {
-      console.error('Error fetching visitors:', error);
-      if (error instanceof TypeError && error.message.includes('fetch')) {
-        addToast('Cannot connect to server. Please ensure the backend is running.', 'error');
-      } else {
-        addToast(error instanceof Error ? error.message : 'Failed to fetch visitors', 'error');
-      }
-      return []; // Return empty array on error
-    } finally {
-      setIsLoading(false);
-    }
-  }, [user, addToast, logout]);
-
-  // Fetch all ICards
-  const fetchICards = useCallback(async () => {
-    if (!user) {
-      console.log('No user found, skipping ICards fetch');
-      return;
-    }
+    activeVisitorLoadRef.current?.abort();
+    const controller = new AbortController();
+    activeVisitorLoadRef.current = controller;
 
     try {
-      const url = `${API_ENDPOINTS.icards}/?page=1&page_size=100`;
-      console.log('Fetching ICards from:', url);
+      if (!silent) setIsLoading(true);
 
-      const response = await fetch(url, {
+      const params = new URLSearchParams({
+        status: 'APPROVED',
+        icards_first: 'true',
+        page: String(page),
+        page_size: String(PAGE_SIZE),
+      });
+      if (!showAllVisitors && selectedDate) {
+        // The selected day in the browser's time zone
+        const dayStart = parseISO(selectedDate);
+        params.set('check_in_from', dayStart.toISOString());
+        params.set('check_in_to', addDays(dayStart, 1).toISOString());
+      }
+
+      const response = await fetch(`${API_ENDPOINTS.visitors}/?${params}`, {
         headers: {
           'Authorization': `Bearer ${user.access_token}`,
           'accept': 'application/json',
         },
+        signal: controller.signal,
       });
 
       if (!response.ok) {
-        let errorText = '';
-        let errorDetails: any = {};
-        try {
-          errorText = await response.text();
-          try {
-            errorDetails = JSON.parse(errorText);
-          } catch {
-            errorDetails = { detail: errorText || 'Unknown error' };
-          }
-        } catch (e) {
-          errorText = 'Failed to read error response';
-        }
-        
-        console.error('Failed to fetch ICards:', {
-          status: response.status,
-          statusText: response.statusText,
-          body: errorText,
-          errorDetails: errorDetails,
-          url: url,
-        });
-
         // Check if it's an authentication error
         if (response.status === 401) {
           addToast('Authentication failed. Please log in again.', 'error');
@@ -310,28 +192,103 @@ export default function AdminPage() {
           return;
         }
 
-        const errorMessage = errorDetails.detail || errorDetails.message || `Failed to fetch ICards: ${response.status} ${response.statusText}`;
-        throw new Error(errorMessage);
+        const errorDetails = await response.json().catch(() => ({}));
+        throw new Error(errorDetails.detail || errorDetails.message || `Failed to fetch visitors: ${response.status} ${response.statusText}`);
       }
 
       const data = await response.json();
-      console.log('ICards fetched successfully:', data);
-      console.log('📊 ICard Status Summary:', {
-        total: data.cards?.length || 0,
-        occupied: data.cards?.filter((c: ICard) => c.occ_status).length || 0,
-        available: data.cards?.filter((c: ICard) => !c.occ_status).length || 0,
-        occupiedCards: data.cards?.filter((c: ICard) => c.occ_status).map((c: ICard) => ({
-          name: c.card_name,
-          occupiedBy: c.occ_to
-        })) || []
-      });
-      setIcards(data.cards || []);
+
+      // Completing the last visitor on the last page leaves this page empty
+      const lastPage = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+      if (page > lastPage) {
+        setPage(lastPage);
+        return;
+      }
+
+      setPageVisitors(data.visitors.map(mapVisitor));
+      setTotalVisitors(data.total);
+      setWithCardTotal(data.with_icard_total ?? 0);
     } catch (error) {
+      if (controller.signal.aborted) return;
+
+      console.error('Error fetching visitors:', error);
+
+      // A failed background refresh keeps the current list and retries on the next poll
+      if (silent) return;
+
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        addToast('Cannot connect to server. Please ensure the backend is running.', 'error');
+      } else {
+        addToast(error instanceof Error ? error.message : 'Failed to fetch visitors', 'error');
+      }
+    } finally {
+      if (activeVisitorLoadRef.current === controller) {
+        activeVisitorLoadRef.current = null;
+        setIsLoading(false);
+      }
+    }
+  }, [user, page, selectedDate, showAllVisitors, addToast, logout]);
+
+  // Fetch all ICards
+  const fetchICards = useCallback(async (silent = false) => {
+    if (!user) return;
+
+    activeCardLoadRef.current?.abort();
+    const controller = new AbortController();
+    activeCardLoadRef.current = controller;
+
+    try {
+      // Every card is needed to show who holds what, so read past the 100-per-page limit
+      const cards: ICard[] = [];
+      let currentPage = 1;
+      let total = 0;
+
+      do {
+        const response = await fetch(`${API_ENDPOINTS.icards}/?page=${currentPage}&page_size=100`, {
+          headers: {
+            'Authorization': `Bearer ${user.access_token}`,
+            'accept': 'application/json',
+          },
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          // Check if it's an authentication error
+          if (response.status === 401) {
+            addToast('Authentication failed. Please log in again.', 'error');
+            logout();
+            return;
+          }
+
+          const errorDetails = await response.json().catch(() => ({}));
+          throw new Error(errorDetails.detail || errorDetails.message || `Failed to fetch ICards: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        if (!data.cards?.length) break;
+
+        cards.push(...data.cards);
+        total = data.total;
+        currentPage++;
+      } while (cards.length < total);
+
+      setIcards(cards);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+
       console.error('Error fetching ICards:', error);
+
+      // A failed background refresh keeps the current cards and retries on the next poll
+      if (silent) return;
+
       if (error instanceof TypeError && error.message.includes('fetch')) {
         addToast('Cannot connect to server. Please ensure the backend is running.', 'error');
       } else {
         addToast(error instanceof Error ? error.message : 'Failed to fetch ICards', 'error');
+      }
+    } finally {
+      if (activeCardLoadRef.current === controller) {
+        activeCardLoadRef.current = null;
       }
     }
   }, [user, addToast, logout]);
@@ -378,42 +335,14 @@ export default function AdminPage() {
         throw new Error(errorMessage);
       }
 
-      // Get the assigned card name from the response
-      const cardData = await response.json();
-      const assignedCardName = cardData.card_name;
-
-      // Immediately update the visitor's assignedCard in state
-      // This ensures the UI updates instantly without waiting for refresh
-      setApprovedVisitors((prevVisitors) =>
-        prevVisitors.map((visitor) =>
-          visitor.id === selectedVisitor.id
-            ? { ...visitor, assignedCard: assignedCardName }
-            : visitor
-        )
-      );
-
-      // Update selected visitor if it's still selected
-      if (selectedVisitor) {
-        setSelectedVisitor({
-          ...selectedVisitor,
-          assignedCard: assignedCardName,
-        });
-      }
-
       addToast('ICard assigned successfully', 'success');
-      
-      // Refresh ICards to update availability
+
+      // Refresh ICards to update availability and show the assignment
       await fetchICards();
-      
-      // Don't refresh visitors immediately - the state update above is enough
-      // Refresh visitors in the background after a delay to ensure sync
-      // This prevents the "With I-Cards" section from disappearing
-      setTimeout(() => {
-        fetchApprovedVisitors().catch((err) => {
-          console.error('Error refreshing visitors:', err);
-        });
-      }, 1000);
-      
+
+      // Move the visitor up to the With I-Cards section
+      fetchApprovedVisitors(true);
+
       // Clear selection after a brief delay to show the success message
       setTimeout(() => {
         setSelectedVisitor(null);
@@ -461,7 +390,7 @@ export default function AdminPage() {
       }
 
       // Remove the visitor from the approved list (they're no longer APPROVED)
-      setApprovedVisitors((prevVisitors) =>
+      setPageVisitors((prevVisitors) =>
         prevVisitors.filter((visitor) => visitor.id !== selectedVisitor.id)
       );
 
@@ -472,7 +401,7 @@ export default function AdminPage() {
       addToast('Visitor marked as completed', 'success');
 
       // Refresh data to ensure consistency
-      await fetchApprovedVisitors();
+      await fetchApprovedVisitors(true);
       await fetchICards();
     } catch (error) {
       console.error('Error completing visitor:', error);
@@ -540,7 +469,7 @@ export default function AdminPage() {
 
       addToast('ICard released successfully', 'success');
       await fetchICards();
-      await fetchApprovedVisitors();
+      await fetchApprovedVisitors(true);
     } catch (error) {
       console.error('Error releasing card:', error);
       addToast(error instanceof Error ? error.message : 'Failed to release ICard', 'error');
@@ -570,7 +499,7 @@ export default function AdminPage() {
       console.log('✅ All ICards released successfully:', data);
       setIcards(data.cards || []);
       addToast(`All ${occupiedCards.length} ICards released successfully!`, 'success');
-      await fetchApprovedVisitors();
+      await fetchApprovedVisitors(true);
     } catch (error) {
       console.error('❌ Error releasing all cards:', error);
       addToast(error instanceof Error ? error.message : 'Failed to release all ICards', 'error');
@@ -589,14 +518,24 @@ export default function AdminPage() {
       if (scannedData.startsWith('APT-')) {
         console.log('👤 Processing visitor appointment QR code');
         
-        // Find the visitor by appointment ID or visitor number
-        const visitor = approvedVisitors.find(v => 
-          v.visitorNumber === scannedData || 
-          v.id.includes(scannedData.split('-')[1]) ||
-          scannedData.includes(v.visitorNumber || '')
-        );
+        // The code holds the visitor ID (APT-<visitor id>-<suffix>). Look it up, as the
+        // visitor may not be on the page showing.
+        const authHeaders = {
+          'Authorization': `Bearer ${user!.access_token}`,
+          'accept': 'application/json',
+        };
+        const visitorResponse = await fetch(`${API_ENDPOINTS.visitors}/${scannedData.split('-')[1]}`, { headers: authHeaders });
+        const visitorData = visitorResponse.ok ? await visitorResponse.json() : null;
 
-        if (visitor) {
+        if (visitorData?.status === 'APPROVED') {
+          // A single visitor comes back with the approver's ID rather than their name
+          const approverResponse = await fetch(`${API_ENDPOINTS.approvers}/${encodeURIComponent(visitorData.person_to_meet)}`, { headers: authHeaders });
+          const approver = approverResponse.ok ? await approverResponse.json() : null;
+          const visitor = {
+            ...mapVisitor({ ...visitorData, person_to_meet_name: approver?.name }),
+            assignedCard: cardByVisitor.get(visitorData.id) ?? null,
+          };
+
           console.log('✅ Found visitor:', visitor.name);
           setSelectedVisitor(visitor);
           
@@ -640,7 +579,7 @@ export default function AdminPage() {
           addToast(`Card ${cardName} released & visit completed${visitorInfo}`, 'success');
 
           // Refresh data
-          await Promise.all([fetchApprovedVisitors(), fetchICards()]);
+          await Promise.all([fetchApprovedVisitors(true), fetchICards()]);
         } catch (err) {
           addToast(err instanceof Error ? err.message : 'Failed to release card', 'error');
         }
@@ -675,77 +614,12 @@ export default function AdminPage() {
     }
   };
 
-  // Fetch card assignments for all approved visitors using the new endpoint - MOVED UP
-  const fetchVisitorCardAssignments = useCallback(async (visitorsToFetch?: typeof approvedVisitors) => {
-    // Use provided visitors or current state
-    const visitors = visitorsToFetch || approvedVisitors;
-    if (visitors.length === 0) return;
-
-    try {
-      // Fetch card assignments for all visitors in parallel
-      const cardPromises = visitors.map(async (visitor) => {
-        try {
-          const response = await fetch(`${API_ENDPOINTS.icards}/visitor/${visitor.rawId}/card`, {
-            headers: {
-              'Authorization': `Bearer ${user?.access_token}`,
-              'accept': 'application/json',
-            },
-          });
-          if (response.ok) {
-            const data = await response.json();
-            return {
-              visitorId: visitor.rawId,
-              cardName: data.icard_name || data.card_name,
-              cardId: data.card_id,
-            };
-          }
-        } catch (error) {
-          console.error(`Error fetching card for visitor ${visitor.rawId}:`, error);
-        }
-        return { visitorId: visitor.rawId, cardName: null, cardId: null };
-      });
-
-      const cardAssignments = await Promise.all(cardPromises);
-
-      // Create a map of visitor ID to card name
-      const visitorCardMap = new Map<number, string | null>();
-      cardAssignments.forEach((assignment) => {
-        visitorCardMap.set(assignment.visitorId, assignment.cardName);
-      });
-
-      // Update approved visitors with card assignments
-      // Only update visitors that don't already have a card assigned (to preserve immediate updates)
-      setApprovedVisitors((prevVisitors) =>
-        prevVisitors.map((visitor) => {
-          const cardName = visitorCardMap.get(visitor.rawId);
-          // Only update if visitor doesn't already have a card assigned
-          // This preserves immediate state updates after assignment
-          if (visitor.assignedCard === null || visitor.assignedCard === undefined) {
-            return {
-              ...visitor,
-              assignedCard: cardName || null,
-            };
-          }
-          return visitor; // Keep existing assignedCard if already set
-        })
-      );
-    } catch (error) {
-      console.error('Error fetching visitor card assignments:', error);
-    }
-  }, [user, approvedVisitors]);
-
   // Manual refresh function
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
       // Fetch visitors and I-cards in parallel
-      const [refreshedVisitors] = await Promise.all([fetchApprovedVisitors(), fetchICards()]);
-
-      // Explicitly fetch card assignments for the refreshed visitors
-      // This ensures visitors with I-Cards are displayed correctly after refresh
-      if (refreshedVisitors && refreshedVisitors.length > 0) {
-        await fetchVisitorCardAssignments(refreshedVisitors);
-      }
+      await Promise.all([fetchApprovedVisitors(), fetchICards()]);
 
       addToast('Data refreshed successfully', 'success');
     } catch (error) {
@@ -784,49 +658,43 @@ export default function AdminPage() {
     }
   }, [authLoading, isAuthenticated, user, router]);
 
-  // Fetch data when user is available (only on mount or when user changes)
+  // Fetch visitors when the user, page or filters change
   useEffect(() => {
-    if (user) {
-      fetchApprovedVisitors();
-      fetchICards();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]); // Only re-fetch when user changes, not when functions change
+    fetchApprovedVisitors();
+  }, [fetchApprovedVisitors]);
 
-  // Auto-refresh ICards every 10 seconds to stay in sync with appointment page
+  // Fetch ICards when the user changes
+  useEffect(() => {
+    fetchICards();
+  }, [fetchICards]);
+
+  // Refresh in the background to stay in sync with the appointment page, and straight away when
+  // the browser tab is reopened. Skipped while hidden or while a load is running, so requests can't pile up.
   useEffect(() => {
     if (!user) return;
 
-    const intervalId = setInterval(() => {
-      console.log('[Admin] Auto-refreshing ICards to stay in sync...');
-      fetchICards();
-    }, 10000); // Refresh every 10 seconds
+    const refresh = () => {
+      if (document.hidden || activeVisitorLoadRef.current || activeCardLoadRef.current) return;
+      fetchApprovedVisitors(true);
+      fetchICards(true);
+    };
 
-    return () => clearInterval(intervalId);
-  }, [user, fetchICards]);
+    const intervalId = setInterval(refresh, POLL_INTERVAL_MS);
+    document.addEventListener('visibilitychange', refresh);
 
-  // Fetch card assignments when approved visitors change
-  // Only fetch if ALL visitors have null/undefined assignedCard (initial load scenario)
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [user, fetchApprovedVisitors, fetchICards]);
+
+  // Cancel any load still running when leaving the page
   useEffect(() => {
-    if (approvedVisitors.length > 0) {
-      // Check if ALL visitors have null/undefined assignedCard (meaning initial load)
-      const allHaveNullCards = approvedVisitors.every(v => v.assignedCard === null || v.assignedCard === undefined);
-      // Only fetch if all visitors have null cards (initial load scenario)
-      // This prevents overwriting immediate state updates after assignment
-      if (allHaveNullCards) {
-        fetchVisitorCardAssignments();
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [approvedVisitors.length]); // Only re-run when the number of visitors changes
-
-  // Also update card assignments when icards change (for real-time updates after assign/release)
-  useEffect(() => {
-    if (approvedVisitors.length > 0 && icards.length > 0) {
-      fetchVisitorCardAssignments();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [icards.length]);
+    return () => {
+      activeVisitorLoadRef.current?.abort();
+      activeCardLoadRef.current?.abort();
+    };
+  }, []);
 
   // Show loading state while checking auth
   if (authLoading) {
@@ -839,16 +707,16 @@ export default function AdminPage() {
   }
 
   // Sort available cards in ascending order by card_name
-  // Show all available cards, but for customer cards only show 1-5 (hide customer_6_W202 and above)
+  // Show all available cards, but for customer cards only show 1-20 (hide customer_21_W202 and above)
   const availableCards = icards
     .filter((card) => {
       if (card.occ_status) return false; // Skip occupied cards
       
-      // If it's a customer card, only show if numbered 1-5
+      // If it's a customer card, only show if numbered 1-20
       const customerMatch = card.card_name.match(/^customer_(\d+)_/i);
       if (customerMatch) {
         const customerNumber = parseInt(customerMatch[1], 10);
-        return customerNumber >= 1 && customerNumber <= 5; // Only customer_1 to customer_5
+        return customerNumber >= 1 && customerNumber <= 20; // Only customer_1 to customer_20
       }
       
       // For all other cards (vendor, etc.), show them
@@ -857,6 +725,11 @@ export default function AdminPage() {
     .sort((a, b) => a.card_name.localeCompare(b.card_name));
 
   const occupiedCards = icards.filter((card) => card.occ_status);
+
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage);
+    setIsLoading(true);
+  };
 
   return (
     <>
@@ -947,16 +820,16 @@ export default function AdminPage() {
           )}
 
           {/* Main Content - Fully Responsive Grid */}
-          <div className="grid gap-4 md:gap-6 xl:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:gap-6 xl:grid-cols-2">
             {/* Left: Approved Visitors List - Fully Responsive */}
             <div className="space-y-2 sm:space-y-3 md:space-y-4">
               {/* Header with title and count */}
               <div className="flex flex-col xs:flex-row xs:items-center xs:justify-between gap-1.5 sm:gap-2">
                 <h2 className="text-base sm:text-lg md:text-xl font-semibold text-foreground">
-                  Approved Visitors ({filteredByDate.length})
+                  Approved Visitors ({totalVisitors})
                 </h2>
                 <p className="text-xs sm:text-sm text-muted-foreground">
-                  {filteredByDate.filter(v => v.assignedCard).length} with I-Cards
+                  {withCardTotal} with I-Cards
                 </p>
               </div>
 
@@ -972,6 +845,7 @@ export default function AdminPage() {
                   value={selectedDate}
                   onChange={(e) => {
                     setSelectedDate(e.target.value);
+                    setPage(1);
                     setSelectedVisitor(null); // Clear selection when filter changes
                   }}
                   max={today}
@@ -982,7 +856,10 @@ export default function AdminPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setSelectedDate(today)}
+                    onClick={() => {
+                      setSelectedDate(today);
+                      setPage(1);
+                    }}
                     className="text-sm h-11 md:h-10"
                   >
                     Today
@@ -998,6 +875,7 @@ export default function AdminPage() {
                     checked={showAllVisitors}
                     onCheckedChange={(checked) => {
                       setShowAllVisitors(checked as boolean);
+                      setPage(1);
                       setSelectedVisitor(null); // Clear selection when filter changes
                     }}
                   />
@@ -1014,7 +892,7 @@ export default function AdminPage() {
                 <div className="rounded-lg border border-border border-dashed p-6 sm:p-8 text-center">
                   <p className="text-sm sm:text-base md:text-lg text-muted-foreground">Loading visitors...</p>
                 </div>
-              ) : filteredByDate.length === 0 ? (
+              ) : approvedVisitors.length === 0 ? (
                 <div className="rounded-lg border border-border border-dashed p-4 sm:p-6 md:p-8 text-center space-y-3">
                   <p className="text-sm sm:text-base md:text-lg text-muted-foreground">
                     {showAllVisitors
@@ -1026,7 +904,10 @@ export default function AdminPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setSelectedDate(today)}
+                      onClick={() => {
+                      setSelectedDate(today);
+                      setPage(1);
+                    }}
                       className="text-sm h-11 md:h-10"
                     >
                       Show Today's Visitors
@@ -1034,29 +915,29 @@ export default function AdminPage() {
                   )}
                 </div>
               ) : (
+                <>
                 <div className="space-y-1.5 sm:space-y-2 md:space-y-3 max-h-[calc(100vh-280px)] sm:max-h-[calc(100vh-300px)] md:max-h-[calc(100vh-320px)] overflow-y-auto -mx-1 px-1">
                   {/* Section: Visitors with I-Cards - Fully Responsive */}
-                  {sortedApprovedVisitors.some(v => v.assignedCard) && (
+                  {approvedVisitors[0].assignedCard && (
                     <div className="sticky top-0 bg-background/95 backdrop-blur-sm py-1 sm:py-1.5 md:py-2 px-2 sm:px-2.5 md:px-3 -mx-1 mb-1 sm:mb-1.5 md:mb-2 border-b border-border z-10">
                       <p className="text-xs sm:text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                        With I-Cards ({sortedApprovedVisitors.filter(v => v.assignedCard).length})
+                        With I-Cards ({withCardTotal})
                       </p>
                     </div>
                   )}
 
-                  {sortedApprovedVisitors.map((visitor, index, array) => {
+                  {approvedVisitors.map((visitor, index, array) => {
                     // Check if we need to show "Without I-Cards" separator
                     const showSeparator =
-                      index > 0 &&
-                      array[index - 1].assignedCard &&
-                      !visitor.assignedCard;
+                      !visitor.assignedCard &&
+                      (index === 0 || array[index - 1].assignedCard);
 
                     return (
                       <div key={visitor.id}>
                         {showSeparator && (
                           <div className="sticky top-0 bg-background/95 backdrop-blur-sm py-1 sm:py-1.5 md:py-2 px-2 sm:px-2.5 md:px-3 -mx-1 mb-1 sm:mb-1.5 md:mb-2 mt-1 sm:mt-1.5 md:mt-2 border-b border-border z-10">
                             <p className="text-xs sm:text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                              Without I-Cards ({sortedApprovedVisitors.filter(v => !v.assignedCard).length})
+                              Without I-Cards ({totalVisitors - withCardTotal})
                             </p>
                           </div>
                         )}
@@ -1104,6 +985,13 @@ export default function AdminPage() {
                     );
                   })}
                 </div>
+                <RequestsPagination
+                  page={page}
+                  pageSize={PAGE_SIZE}
+                  total={totalVisitors}
+                  onChange={handlePageChange}
+                />
+                </>
               )}
             </div>
 

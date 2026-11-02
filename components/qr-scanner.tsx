@@ -403,7 +403,7 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
         <div className="flex items-center justify-between px-3 py-2.5 sm:px-4 sm:py-3 md:px-6 md:py-4 border-b border-gray-200 flex-shrink-0">
           <div className="flex-1 min-w-0 pr-2">
             <h2 className="text-base sm:text-lg md:text-xl font-bold text-gray-900 truncate">Scan QR Code</h2>
-            <p className="text-[10px] sm:text-xs md:text-sm text-gray-500 mt-0.5 truncate">Scan visitor or ICard QR code</p>
+            <p className="text-[12px] sm:text-xs md:text-sm text-gray-500 mt-0.5 truncate">Scan visitor or ICard QR code</p>
           </div>
           <Button
             variant="ghost"
@@ -500,7 +500,7 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
                     <p className="text-xs sm:text-sm md:text-base text-gray-500">
                       {isScanning ? '📸 Scanning...' : 'Starting camera...'}
                     </p>
-                    <p className="text-[10px] sm:text-xs md:text-sm text-gray-400">
+                    <p className="text-[12px] sm:text-xs md:text-sm text-gray-400">
                       Position the QR code within the frame
                     </p>
                   </>

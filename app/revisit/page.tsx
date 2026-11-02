@@ -14,6 +14,7 @@ import { Toast, useToast } from '@/components/toast';
 import { VisitorImage } from '@/components/visitor-image';
 import { API_ENDPOINTS, getImageUrl } from '@/lib/api-config';
 import { PersonToMeet } from '@/lib/types';
+import { registrationHref } from '@/lib/warehouse';
 
 interface ElectronicsItem {
   type: string;
@@ -89,6 +90,7 @@ const ELECTRONICS_ITEM_OPTIONS = ["Laptop", "Tablet", "Mobile", "Others"];
 function RevisitContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const homeHref = registrationHref(searchParams.get('warehouse'));
   const { toasts, addToast, removeToast } = useToast();
 
   // Visitor data from API
@@ -147,7 +149,9 @@ function RevisitContent() {
         }
         const data = await response.json();
         if (data.length > 0) {
-          setVisitorData(data[0]); // Most recent visit
+          // Most recent visit, with the newest photo on record (check-in reuses the same one).
+          const visitWithPhoto = data.find((visit: any) => visit.img_url);
+          setVisitorData({ ...data[0], img_url: visitWithPhoto?.img_url });
         } else {
           throw new Error('No previous visits found');
         }
@@ -264,6 +268,8 @@ function RevisitContent() {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       const context = canvas.getContext('2d');
+      // The stream can attach before its first frame; capturing then gives an empty image.
+      if (!video.videoWidth || !video.videoHeight) return;
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       if (context) {
@@ -371,6 +377,7 @@ function RevisitContent() {
   // Validation
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
+    if (!visitorData?.img_url && !selfie) newErrors.selfie = 'Selfie is required';
     if (!personToMeet) newErrors.personToMeet = 'Please select who you are meeting';
     if (reasonForVisit.length === 0) newErrors.reasonForVisit = 'Please select at least one reason';
     else if (reasonForVisit.includes('Other') && !customReason.trim()) newErrors.reasonForVisit = 'Please specify the reason';
@@ -408,9 +415,21 @@ function RevisitContent() {
 
       if (visitorData.email_address) formDataToSend.append('email_address', visitorData.email_address);
       if (visitorData.company) formDataToSend.append('company', visitorData.company);
-      if (visitorData.warehouse) formDataToSend.append('warehouse', visitorData.warehouse);
+      // The QR scanned for this visit wins over the warehouse of the last visit.
+      const warehouse = searchParams.get('warehouse') || visitorData.warehouse;
+      if (warehouse) formDataToSend.append('warehouse', warehouse);
       formDataToSend.append('carrying_electronics', carryingElectronics.toString());
       formDataToSend.append('is_revisit', 'true');
+
+      if (selfie) {
+        const selfieBytes = atob(selfie.split(',')[1]);
+        const selfieArray = new Array(selfieBytes.length);
+        for (let i = 0; i < selfieBytes.length; i++) {
+          selfieArray[i] = selfieBytes.charCodeAt(i);
+        }
+        const selfieBlob = new Blob([new Uint8Array(selfieArray)], { type: 'image/jpeg' });
+        formDataToSend.append('image', selfieBlob, 'selfie.jpg');
+      }
 
       if (carryingElectronics && electronicsItems.length > 0) {
         formDataToSend.append('electronics_items', JSON.stringify(electronicsItems));
@@ -452,7 +471,7 @@ function RevisitContent() {
   if (loading) {
     return (
       <>
-        <AppHeader />
+        <AppHeader homeHref={homeHref} />
         <div className="min-h-screen flex items-center justify-center">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
@@ -467,7 +486,7 @@ function RevisitContent() {
   if (error || !visitorData) {
     return (
       <>
-        <AppHeader />
+        <AppHeader homeHref={homeHref} />
         <div className="min-h-screen flex items-center justify-center px-4">
           <div className="text-center max-w-md">
             <div className="inline-flex h-16 w-16 items-center justify-center rounded-full bg-red-100 mb-4">
@@ -475,7 +494,7 @@ function RevisitContent() {
             </div>
             <h2 className="text-xl font-bold text-gray-900 mb-2">Unable to Load Details</h2>
             <p className="text-gray-600 mb-6">{error || 'No visitor data found'}</p>
-            <Link href="/">
+            <Link href={homeHref}>
               <Button className="bg-[#7a2e2e] text-white hover:bg-[#8a3e3e]">Go Back to Registration</Button>
             </Link>
           </div>
@@ -488,11 +507,11 @@ function RevisitContent() {
   if (step === 'confirm') {
     return (
       <>
-        <AppHeader />
+        <AppHeader homeHref={homeHref} />
         <div className="min-h-screen bg-gray-50 py-8 px-4">
           <div className="max-w-2xl mx-auto">
             <button
-              onClick={() => router.push('/')}
+              onClick={() => router.push(homeHref)}
               className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -548,7 +567,7 @@ function RevisitContent() {
                 >
                   Yes, this is me
                 </Button>
-                <Link href="/" className="flex-1">
+                <Link href={homeHref} className="flex-1">
                   <Button
                     variant="outline"
                     className="w-full h-12 text-base border-gray-300"
@@ -572,12 +591,12 @@ function RevisitContent() {
 
   return (
     <>
-      <AppHeader />
+      <AppHeader homeHref={homeHref} />
       <div className="min-h-screen bg-gray-50 py-8 px-4">
         <div className="max-w-2xl mx-auto">
           {/* Back button */}
           <button
-            onClick={() => router.push('/')}
+            onClick={() => router.push(homeHref)}
             className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4"
           >
             <ChevronLeft className="h-4 w-4" />
@@ -617,6 +636,29 @@ function RevisitContent() {
             )}
 
             <div className="space-y-5">
+              {/* Selfie - only asked for when no earlier visit has a photo */}
+              {!visitorData.img_url && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Selfie <span className="text-red-500">*</span>
+                  </label>
+                  <p className="text-xs text-gray-500 mb-2">We don&apos;t have a photo from your earlier visit. Please take one now.</p>
+                  {selfie ? (
+                    <div className="flex items-center gap-3">
+                      <img src={selfie} alt="Captured selfie" className="w-16 h-16 object-cover rounded-lg border" />
+                      <button type="button" onClick={startCamera} className="text-sm text-blue-600 hover:text-blue-800 underline">
+                        Retake Selfie
+                      </button>
+                    </div>
+                  ) : (
+                    <Button type="button" variant="outline" size="sm" onClick={startCamera} className="text-xs">
+                      Take Selfie
+                    </Button>
+                  )}
+                  {formErrors.selfie && <p className="mt-1 text-xs text-red-600">{formErrors.selfie}</p>}
+                </div>
+              )}
+
               {/* Person to Meet */}
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">

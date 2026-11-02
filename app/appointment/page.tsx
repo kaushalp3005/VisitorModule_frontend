@@ -567,16 +567,16 @@ export default function AppointmentPage() {
   }
 
   // Sort available cards
-  // Show all available cards, but for customer cards only show 1-5 (hide customer_6_W202 and above)
+  // Show all available cards, but for customer cards only show 1-20 (hide customer_21_W202 and above)
   const availableCards = icards
     .filter((card) => {
       if (card.occ_status) return false; // Skip occupied cards
       
-      // If it's a customer card, only show if numbered 1-5
+      // If it's a customer card, only show if numbered 1-20
       const customerMatch = card.card_name.match(/^customer_(\d+)_/i);
       if (customerMatch) {
         const customerNumber = parseInt(customerMatch[1], 10);
-        return customerNumber >= 1 && customerNumber <= 5; // Only customer_1 to customer_5
+        return customerNumber >= 1 && customerNumber <= 20; // Only customer_1 to customer_20
       }
       
       // For all other cards (vendor, etc.), show them
@@ -701,7 +701,7 @@ export default function AppointmentPage() {
                     </div>
                   )}
 
-                  <div className="space-y-1.5 sm:space-y-2 md:space-y-3 text-[11px] sm:text-xs md:text-sm">
+                  <div className="space-y-1.5 sm:space-y-2 md:space-y-3 text-[13px] sm:text-xs md:text-sm">
                     <div>
                       <p className="text-muted-foreground">Name</p>
                       <p className="text-foreground font-medium">{scannedVisitor.visitor_name}</p>
@@ -769,7 +769,7 @@ export default function AppointmentPage() {
                     <div>
                       <p className="text-muted-foreground">Status</p>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`inline-flex items-center rounded-full px-2 py-1 text-[10px] sm:text-xs font-medium ${
+                        <span className={`inline-flex items-center rounded-full px-2 py-1 text-[12px] sm:text-xs font-medium ${
                           scannedVisitor.status === 'APPROVED' ? 'bg-green-100 text-green-800' :
                           scannedVisitor.status === 'WAITING' ? 'bg-yellow-100 text-yellow-800' :
                           scannedVisitor.status === 'REJECTED' ? 'bg-red-100 text-red-800' :
@@ -778,7 +778,7 @@ export default function AppointmentPage() {
                           {scannedVisitor.status}
                         </span>
                         {scannedVisitor.isAppointment && scannedVisitor.status === 'APPROVED' && (
-                          <span className="inline-flex items-center rounded-full px-2 py-1 text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-800 border border-purple-200">
+                          <span className="inline-flex items-center rounded-full px-2 py-1 text-[12px] sm:text-xs font-medium bg-purple-100 text-purple-800 border border-purple-200">
                             APPOINTMENT CONFIRMED
                           </span>
                         )}
@@ -787,14 +787,14 @@ export default function AppointmentPage() {
                     <div>
                       <p className="text-muted-foreground">Assigned ICard</p>
                       {scannedVisitor.assignedCard ? (
-                        <div className="inline-flex items-center rounded-md bg-blue-50 px-2 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs md:text-sm font-medium text-blue-700 border border-blue-200 mt-1">
+                        <div className="inline-flex items-center rounded-md bg-blue-50 px-2 sm:px-3 py-1 sm:py-1.5 text-[13px] sm:text-xs md:text-sm font-medium text-blue-700 border border-blue-200 mt-1">
                           <svg className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4 md:h-4 md:w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" />
                           </svg>
                           <span className="truncate">{formatCardName(scannedVisitor.assignedCard)}</span>
                         </div>
                       ) : (
-                        <p className="text-orange-600 font-medium text-[11px] sm:text-xs md:text-sm">Not assigned</p>
+                        <p className="text-orange-600 font-medium text-[13px] sm:text-xs md:text-sm">Not assigned</p>
                       )}
                     </div>
                   </div>
@@ -805,7 +805,7 @@ export default function AppointmentPage() {
                   <p className="text-xs sm:text-sm md:text-base text-muted-foreground mb-2 sm:mb-3">
                     No visitor scanned yet
                   </p>
-                  <p className="text-[10px] sm:text-xs text-muted-foreground">
+                  <p className="text-[12px] sm:text-xs text-muted-foreground">
                     Click "Scan Visitor QR" to scan a visitor's QR code
                   </p>
                 </div>
@@ -821,7 +821,7 @@ export default function AppointmentPage() {
                 </h2>
                 {availableCards.length === 0 ? (
                   <div className="space-y-2">
-                    <p className="text-[11px] sm:text-xs md:text-sm text-muted-foreground">
+                    <p className="text-[13px] sm:text-xs md:text-sm text-muted-foreground">
                       {icards.length === 0
                         ? 'No ICards configured. Add ICards in the system to assign to visitors.'
                         : 'No ICards available. All cards are currently occupied.'}
@@ -832,7 +832,7 @@ export default function AppointmentPage() {
                         size="sm"
                         onClick={handleReleaseAllCards}
                         disabled={isReleasingAll}
-                        className="text-destructive hover:text-destructive border-destructive/50 text-[10px] sm:text-xs"
+                        className="text-destructive hover:text-destructive border-destructive/50 text-[12px] sm:text-xs"
                       >
                         {isReleasingAll ? 'Releasing...' : 'Release all ICards'}
                       </Button>
@@ -847,13 +847,13 @@ export default function AppointmentPage() {
                       >
                         <div className="min-w-0 flex-1">
                           <p className="text-xs sm:text-sm md:text-base font-medium text-foreground truncate">{formatCardName(card.card_name)}</p>
-                          <p className="text-[9px] sm:text-[10px] md:text-xs text-green-600">Available</p>
+                          <p className="text-[11px] sm:text-[12px] md:text-xs text-green-600">Available</p>
                         </div>
                         <Button
                           size="sm"
                           onClick={() => handleAssignCard(card.id)}
                           disabled={isAssigning || !scannedVisitor || !!scannedVisitor?.assignedCard}
-                          className="bg-primary text-primary-foreground hover:bg-primary/90 text-[10px] sm:text-xs md:text-sm h-7 sm:h-7 md:h-8 px-2 sm:px-2.5 md:px-3 shrink-0 touch-manipulation disabled:opacity-50"
+                          className="bg-primary text-primary-foreground hover:bg-primary/90 text-[12px] sm:text-xs md:text-sm h-7 sm:h-7 md:h-8 px-2 sm:px-2.5 md:px-3 shrink-0 touch-manipulation disabled:opacity-50"
                         >
                           {isAssigning ? 'Assigning...' : scannedVisitor?.assignedCard ? 'Already Assigned' : 'Assign'}
                         </Button>
@@ -877,7 +877,7 @@ export default function AppointmentPage() {
                       >
                         <div className="min-w-0 flex-1">
                           <p className="text-xs sm:text-sm md:text-base font-medium text-foreground truncate">{formatCardName(card.card_name)}</p>
-                          <p className="text-[9px] sm:text-[10px] md:text-xs text-red-600">
+                          <p className="text-[11px] sm:text-[12px] md:text-xs text-red-600">
                             Occupied (Visitor #{card.occ_to})
                           </p>
                         </div>
@@ -885,7 +885,7 @@ export default function AppointmentPage() {
                           size="sm"
                           variant="outline"
                           onClick={() => handleReleaseCard(card.id)}
-                          className="text-destructive hover:text-destructive text-[10px] sm:text-xs md:text-sm h-7 sm:h-7 md:h-8 px-2 sm:px-2.5 md:px-3 shrink-0 touch-manipulation"
+                          className="text-destructive hover:text-destructive text-[12px] sm:text-xs md:text-sm h-7 sm:h-7 md:h-8 px-2 sm:px-2.5 md:px-3 shrink-0 touch-manipulation"
                         >
                           Release
                         </Button>

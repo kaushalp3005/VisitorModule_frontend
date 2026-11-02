@@ -11,6 +11,7 @@ import { Toast, useToast } from '@/components/toast';
 import { useVisitors } from '@/lib/visitor-store';
 import { API_ENDPOINTS } from '@/lib/api-config';
 import { useAuth } from '@/lib/auth-store';
+import { DEFAULT_WAREHOUSE, registrationHref } from '@/lib/warehouse';
 
 interface HealthDeclaration {
   hasRespiratoryAilment: boolean;
@@ -138,7 +139,8 @@ export default function VisitorCheckInPage() {
         setRevisitError(body.detail || body.error || 'Verification failed.');
         return;
       }
-      router.push(`/revisit?phone=${revisitVerifiedPhone}`);
+      const warehouseQuery = warehouseName ? `&warehouse=${encodeURIComponent(warehouseName)}` : '';
+      router.push(`/revisit?phone=${revisitVerifiedPhone}${warehouseQuery}`);
     } catch {
       setRevisitError('Cannot reach the server. Please try again.');
     } finally {
@@ -157,16 +159,10 @@ export default function VisitorCheckInPage() {
 
   // Check URL parameters on mount for warehouse from QR code scan
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const warehouseParam = params.get('warehouse');
-    if (warehouseParam) {
-      const decodedWarehouse = decodeURIComponent(warehouseParam);
-      setWarehouseName(decodedWarehouse);
-      addToast(`Warehouse: ${decodedWarehouse}`, 'success');
-      // Clean up URL to remove the parameter (optional - keeps URL clean)
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-  }, [addToast]);
+    const warehouseParam = new URLSearchParams(window.location.search).get('warehouse');
+    // The parameter stays in the URL so a reload or bookmark keeps the warehouse.
+    setWarehouseName(warehouseParam ? decodeURIComponent(warehouseParam) : DEFAULT_WAREHOUSE);
+  }, []);
 
   const handleFormSubmit = async (formData: VisitorFormData) => {
     setIsLoading(true);
@@ -312,11 +308,13 @@ export default function VisitorCheckInPage() {
   return (
     <>
       <AppHeader
+        homeHref={registrationHref(warehouseName)}
         rightContent={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <Link href="/dashboard">
               <Button variant="outline" size="sm" className="text-xs sm:text-sm">
-                Approver Dashboard
+                <span className="hidden sm:inline">Approver Dashboard</span>
+                <span className="sm:hidden">Dashboard</span>
               </Button>
             </Link>
             <Link href="/appointment">
@@ -407,7 +405,7 @@ export default function VisitorCheckInPage() {
         </div>
 
         {/* Right section - White form area */}
-        <div className="flex-1 lg:w-3/5 bg-white relative">
+        <div className="flex-1 min-w-0 lg:w-3/5 bg-white relative">
           {/* Curved edge on mobile/tablet */}
           <div className="lg:hidden absolute top-0 left-0 right-0 h-24 gradient-blue rounded-b-[3rem]"></div>
           
@@ -515,17 +513,6 @@ export default function VisitorCheckInPage() {
                   </div>
                 ) : (
                   <>
-                    {warehouseName && (
-                      <div className="mb-4">
-                        <div className="inline-flex items-center rounded-lg bg-blue-50 px-4 py-2.5 text-sm font-medium text-blue-700 border border-blue-200">
-                          <svg className="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                          </svg>
-                          {warehouseName}
-                        </div>
-                      </div>
-                    )}
-
                     {/* Visited us before? — sends a WhatsApp OTP, verifies it, then routes to /revisit */}
                     {revisitPrompt !== 'declined' && (
                       <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50/60 p-4 sm:p-5">
@@ -542,7 +529,7 @@ export default function VisitorCheckInPage() {
                                 <p className="text-xs sm:text-sm text-gray-600 mt-0.5">Skip the form — we'll fetch your details from your last visit. We'll send a one-time code to your WhatsApp to verify.</p>
                               </div>
                             </div>
-                            <div className="flex gap-2 sm:flex-shrink-0">
+                            <div className="flex flex-wrap gap-2 sm:flex-shrink-0">
                               <Button
                                 type="button"
                                 size="sm"

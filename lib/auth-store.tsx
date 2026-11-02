@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { API_ENDPOINTS } from './api-config';
 
-const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
+const SESSION_DURATION_MS = 14 * 24 * 60 * 60 * 1000; // 14 days in milliseconds
 
 type AuthUser = {
   username: string;
@@ -18,12 +18,19 @@ type AuthUser = {
   session_created_at?: number; // timestamp when session was created
 };
 
+type OtpResult = {
+  success: boolean;
+  message: string;
+  resendAfterSeconds?: number;
+};
+
 type AuthContextType = {
   user: AuthUser | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (username: string, password: string) => Promise<boolean>;
-  identify: (fullName: string) => Promise<boolean>;
+  sendLoginOtp: (username: string) => Promise<OtpResult>;
+  verifyLoginOtp: (username: string, otp: string) => Promise<OtpResult>;
   logout: () => void;
 };
 
@@ -33,7 +40,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Check for stored auth on mount + validate 7-day session expiry
+  // Check for stored auth on mount + validate 14-day session expiry
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const storedUser = localStorage.getItem('auth_user');
@@ -41,7 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           const parsed: AuthUser = JSON.parse(storedUser);
 
-          // Check if session has expired (7 days)
+          // Check if session has expired (14 days)
           if (parsed.session_created_at) {
             const elapsed = Date.now() - parsed.session_created_at;
             if (elapsed > SESSION_DURATION_MS) {
@@ -61,31 +68,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Identify by full name (no password) - for approver dashboard
-  const identify = useCallback(async (fullName: string): Promise<boolean> => {
+  // Send a login OTP on WhatsApp to the approver's registered phone number
+  const sendLoginOtp = useCallback(async (username: string): Promise<OtpResult> => {
     try {
-      const response = await fetch(API_ENDPOINTS.auth.identify, {
+      const response = await fetch(API_ENDPOINTS.auth.sendLoginOtp, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'accept': 'application/json',
         },
-        body: JSON.stringify({ name: fullName }),
+        body: JSON.stringify({ username }),
       });
 
+      const data = await response.json().catch(() => ({}));
+
       if (!response.ok) {
-        let errorMessage = 'Employee not found';
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.detail || errorMessage;
-        } catch (e) {
-          // ignore parse errors
-        }
-        console.error('[Auth] Identify failed:', errorMessage);
-        return false;
+        return {
+          success: false,
+          message: typeof data.detail === 'string' ? data.detail : 'Could not send the OTP. Please try again.',
+        };
       }
 
-      const data = await response.json();
+      return {
+        success: true,
+        message: data.message,
+        resendAfterSeconds: data.resend_after_seconds,
+      };
+    } catch (error) {
+      console.error('[Auth] Send login OTP error:', error);
+      return { success: false, message: 'Cannot reach the server. Please check your connection and try again.' };
+    }
+  }, []);
+
+  // Verify the login OTP and sign the approver in
+  const verifyLoginOtp = useCallback(async (username: string, otp: string): Promise<OtpResult> => {
+    try {
+      const response = await fetch(API_ENDPOINTS.auth.verifyLoginOtp, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'accept': 'application/json',
+        },
+        body: JSON.stringify({ username, otp }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        return {
+          success: false,
+          message: typeof data.detail === 'string' ? data.detail : 'Verification failed. Please try again.',
+        };
+      }
 
       const authUser: AuthUser = {
         username: data.approver.username,
@@ -104,10 +138,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (typeof window !== 'undefined') {
         localStorage.setItem('auth_user', JSON.stringify(authUser));
       }
-      return true;
+      return { success: true, message: 'Verification successful.' };
     } catch (error) {
-      console.error('[Auth] Identify error:', error);
-      return false;
+      console.error('[Auth] Verify login OTP error:', error);
+      return { success: false, message: 'Cannot reach the server. Please check your connection and try again.' };
     }
   }, []);
 
@@ -167,7 +201,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated: !!user,
         isLoading,
         login,
-        identify,
+        sendLoginOtp,
+        verifyLoginOtp,
         logout,
       }}
     >

@@ -179,6 +179,9 @@ export default function AdminLoginPage() {
               <p className="text-xs text-orange-600">
                 Admin access required
               </p>
+              <Link href="/login" className="inline-block mt-2 text-xs text-orange-700 hover:text-orange-900 hover:underline">
+                Superuser or approver? Sign in with OTP
+              </Link>
             </div>
           </div>
         </div>

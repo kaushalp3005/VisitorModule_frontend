@@ -1,113 +1,167 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AppHeader } from '@/components/app-header';
 import { PageContainer } from '@/components/page-container';
 import { TabSwitcher } from '@/components/tab-switcher';
 import { VisitorRequestCard } from '@/components/visitor-request-card';
+import { RequestsPagination } from '@/components/requests-pagination';
 import { Button } from '@/components/ui/button';
 import { Toast, useToast } from '@/components/toast';
 import { useAuth } from '@/lib/auth-store';
 import { API_ENDPOINTS } from '@/lib/api-config';
 import { ManageApprovers } from '@/components/manage-approvers';
 
+const PAGE_SIZE = 12;
+const POLL_INTERVAL_MS = 30000;
+
+// Backend status behind each tab that lists the logged-in approver's own requests
+const TAB_STATUS: Record<string, string> = {
+  Pending: 'WAITING',
+  Approved: 'APPROVED',
+  Rejected: 'REJECTED',
+};
+
+type VisitorStats = {
+  total_visitors: number;
+  waiting: number;
+  approved: number;
+  rejected: number;
+};
+
+// A malformed declaration on an old row must not take the whole page down
+function parseHealthDeclaration(value: string | null | undefined): any {
+  try {
+    const parsed = JSON.parse(value || 'null');
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Map the API response to match the expected format
+function mapVisitor(visitor: any) {
+  // Normalize status to lowercase for internal use
+  const normalizedStatus = visitor.status.toLowerCase();
+  const healthData = parseHealthDeclaration(visitor.health_declaration);
+
+  // Check if this is an appointment request (from Google Form)
+  const isAppointment = visitor.reason_to_visit?.startsWith('[APPOINTMENT]') || healthData?.source === 'google_form';
+
+  return {
+    id: visitor.id.toString(),
+    name: visitor.visitor_name,
+    mobileNumber: visitor.mobile_number,
+    email: visitor.email_address,
+    company: visitor.company,
+    personToMeet: {
+      id: visitor.person_to_meet,
+      displayName: visitor.person_to_meet_name || visitor.person_to_meet,
+    },
+    reasonForVisit: visitor.reason_to_visit,
+    status: normalizedStatus === 'waiting' ? 'pending' : normalizedStatus,
+    submittedAt: visitor.check_in_time,
+    visitorNumber: normalizedStatus === 'approved' ? visitor.id.toString() : undefined,
+    approvedAt: normalizedStatus === 'approved' ? visitor.updated_at : undefined,
+    rejectedAt: normalizedStatus === 'rejected' ? visitor.updated_at : undefined,
+    rejectionReason: visitor.rejection_reason,
+    rawId: visitor.id, // Store the raw ID for API calls
+    imageUrl: visitor.img_url || visitor.image_url, // Support both field names
+    healthDeclaration: healthData ? visitor.health_declaration : undefined,
+    warehouse: visitor.warehouse,
+    isAppointment: isAppointment, // Flag to identify appointment requests
+    timeSlot: isAppointment ? healthData?.time_slot : null, // Time slot for appointments
+  };
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading, logout } = useAuth();
   const { toasts, addToast, removeToast } = useToast();
   const [activeTab, setActiveTab] = useState('Pending');
+  const [page, setPage] = useState(1);
   const [requests, setRequests] = useState<any[]>([]);
-  const [allRequests, setAllRequests] = useState<any[]>([]);
+  const [totalRequests, setTotalRequests] = useState(0);
+  const [myStats, setMyStats] = useState<VisitorStats | null>(null);
+  const [allStats, setAllStats] = useState<VisitorStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // The load in progress, if any. A newer load cancels it so a slow older
+  // response can't overwrite what's on screen.
+  const activeLoadRef = useRef<AbortController | null>(null);
 
-  // Fetch visitor requests for the logged-in user
+  // Fetch the current tab's page of requests plus the counts shown around it
   const fetchRequests = useCallback(async (silent = false) => {
     if (!user) return;
 
-    try {
-      if (!silent) setIsLoading(true);
+    activeLoadRef.current?.abort();
+    const controller = new AbortController();
+    activeLoadRef.current = controller;
+    let sessionExpired = false;
 
-      const url = `${API_ENDPOINTS.visitors}/`;
-
-      // Fetch all visitors using the authenticated endpoint
+    const fetchJson = async (url: string) => {
       const response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${user.access_token}`,
           'accept': 'application/json',
         },
+        signal: controller.signal,
       });
 
       if (!response.ok) {
-        // Check if it's an authentication error
-        if (response.status === 401) {
-          addToast('Authentication failed. Please log in again.', 'error');
-          logout();
-          return;
-        }
-
-        const errorText = await response.text();
+        sessionExpired = response.status === 401;
         throw new Error(`Failed to fetch visitor requests: ${response.status} ${response.statusText}`);
       }
 
-      const data = await response.json();
+      return response.json();
+    };
 
-      // Filter visitors where person_to_meet matches the logged-in user's username
-      const userVisitors = data.visitors.filter(
-        (visitor: any) => visitor.person_to_meet === user.username
-      );
+    try {
+      if (!silent) setIsLoading(true);
 
-      // Map the API response to match the expected format
-      const mappedRequests = userVisitors.map((visitor: any) => {
-        // Normalize status to lowercase for internal use
-        const normalizedStatus = visitor.status.toLowerCase();
+      const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
+      if (TAB_STATUS[activeTab]) {
+        params.set('mine', 'true');
+        params.set('status', TAB_STATUS[activeTab]);
+      }
 
-        // Check if this is an appointment request (from Google Form)
-        const isAppointment = visitor.reason_to_visit?.startsWith('[APPOINTMENT]') || 
-                             (visitor.health_declaration && 
-                              JSON.parse(visitor.health_declaration || '{}').source === 'google_form');
-        
-        // Extract time slot from health_declaration if it's an appointment
-        let timeSlot = null;
-        if (isAppointment && visitor.health_declaration) {
-          try {
-            const healthData = JSON.parse(visitor.health_declaration);
-            timeSlot = healthData.time_slot;
-          } catch (e) {
-            // Ignore parsing errors
-          }
+      const [list, mine, all] = await Promise.all([
+        activeTab === 'Manage Approvers' ? null : fetchJson(`${API_ENDPOINTS.visitors}/?${params}`),
+        fetchJson(`${API_ENDPOINTS.visitors}/stats?mine=true`),
+        activeTab === 'All Requests' ? fetchJson(`${API_ENDPOINTS.visitors}/stats`) : null,
+      ]);
+
+      setMyStats(mine);
+      if (all) setAllStats(all);
+
+      if (list) {
+        // Approving the last request on the last page leaves this page empty
+        const lastPage = Math.max(1, Math.ceil(list.total / PAGE_SIZE));
+        if (page > lastPage) {
+          setPage(lastPage);
+          return;
         }
 
-        return {
-          id: visitor.id.toString(),
-          name: visitor.visitor_name,
-          mobileNumber: visitor.mobile_number,
-          email: visitor.email_address,
-          company: visitor.company,
-          personToMeet: {
-            id: visitor.person_to_meet,
-            displayName: user.name,
-          },
-          reasonForVisit: visitor.reason_to_visit,
-          status: normalizedStatus === 'waiting' ? 'pending' : normalizedStatus,
-          submittedAt: visitor.check_in_time,
-          visitorNumber: normalizedStatus === 'approved' ? visitor.id.toString() : undefined,
-          approvedAt: normalizedStatus === 'approved' ? visitor.updated_at : undefined,
-          rejectedAt: normalizedStatus === 'rejected' ? visitor.updated_at : undefined,
-          rejectionReason: visitor.rejection_reason,
-          rawId: visitor.id, // Store the raw ID for API calls
-          imageUrl: visitor.img_url || visitor.image_url, // Support both field names
-          healthDeclaration: visitor.health_declaration,
-          warehouse: visitor.warehouse,
-          isAppointment: isAppointment, // Flag to identify appointment requests
-          timeSlot: timeSlot, // Time slot for appointments
-        };
-      });
-
-      setRequests(mappedRequests);
+        setRequests(list.visitors.map(mapVisitor));
+        setTotalRequests(list.total);
+      }
     } catch (error) {
+      if (controller.signal.aborted) return;
+
+      // Check if it's an authentication error
+      if (sessionExpired) {
+        addToast('Authentication failed. Please log in again.', 'error');
+        logout();
+        return;
+      }
+
+      // A failed background refresh keeps the current data on screen and retries on the next poll
+      if (silent) {
+        console.error('[Dashboard] Refresh failed:', error);
+        return;
+      }
+
       // Provide user-friendly error messages
       if (error instanceof TypeError && error.message.includes('fetch')) {
         addToast('Cannot connect to server. Please ensure the backend is running.', 'error');
@@ -117,149 +171,12 @@ export default function DashboardPage() {
         addToast('Failed to fetch visitor requests. Please try again.', 'error');
       }
     } finally {
-      setIsLoading(false);
-    }
-  }, [user, addToast, logout]);
-
-  // Fetch all visitor requests (for superusers only)
-  const fetchAllRequests = useCallback(async (silent = false) => {
-    if (!user || !user.superuser) return;
-
-    try {
-      if (!silent) setIsLoading(true);
-
-      // Fetch all visitors - loop through all pages
-      let allVisitors: any[] = [];
-      let currentPage = 1;
-      let totalPages = 1;
-
-      do {
-        const url = `${API_ENDPOINTS.visitors}/?page=${currentPage}&page_size=100`;
-        
-        const response = await fetch(url, {
-          headers: {
-            'Authorization': `Bearer ${user.access_token}`,
-            'accept': 'application/json',
-          },
-        });
-
-        if (!response.ok) {
-          // Check if it's an authentication error
-          if (response.status === 401) {
-            addToast('Authentication failed. Please log in again.', 'error');
-            logout();
-            return;
-          }
-
-          const errorText = await response.text();
-          throw new Error(`Failed to fetch all visitor requests: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        allVisitors = [...allVisitors, ...data.visitors];
-
-        // Calculate total pages based on total count and page size
-        totalPages = Math.ceil(data.total / 100);
-        currentPage++;
-      } while (currentPage <= totalPages);
-
-      // Get unique approver usernames
-      const uniqueApprovers = [...new Set(allVisitors.map((v: any) => v.person_to_meet))];
-
-      // Fetch approver details for all unique approvers
-      const approverDetailsMap = new Map<string, string>();
-      await Promise.all(
-        uniqueApprovers
-          .filter((username) => username && username.trim() !== '') // Filter out empty/null usernames
-          .map(async (username) => {
-            try {
-              // Skip if username looks like a test/dummy value
-              if (username.toLowerCase().includes('john') && username.toLowerCase().includes('doe')) {
-                approverDetailsMap.set(username, username);
-                return;
-              }
-              
-              const response = await fetch(`${API_ENDPOINTS.approvers}/${encodeURIComponent(username)}`, {
-                headers: {
-                  'Authorization': `Bearer ${user.access_token}`,
-                  'accept': 'application/json',
-                },
-              });
-              if (response.ok) {
-                const approver = await response.json();
-                approverDetailsMap.set(username, approver.name);
-              } else if (response.status === 404) {
-                approverDetailsMap.set(username, username);
-              } else {
-                approverDetailsMap.set(username, username); // Fallback to username
-              }
-            } catch (error) {
-              approverDetailsMap.set(username, username);
-            }
-          })
-      );
-
-      // Map the API response to match the expected format
-      const mappedRequests = allVisitors.map((visitor: any) => {
-        // Normalize status to lowercase for internal use
-        const normalizedStatus = visitor.status.toLowerCase();
-        
-        // Check if this is an appointment request (from Google Form)
-        const isAppointment = visitor.reason_to_visit?.startsWith('[APPOINTMENT]') || 
-                             (visitor.health_declaration && 
-                              JSON.parse(visitor.health_declaration || '{}').source === 'google_form');
-        
-        // Extract time slot from health_declaration if it's an appointment
-        let timeSlot = null;
-        if (isAppointment && visitor.health_declaration) {
-          try {
-            const healthData = JSON.parse(visitor.health_declaration);
-            timeSlot = healthData.time_slot;
-          } catch (e) {
-            // Ignore parsing errors
-          }
-        }
-
-        return {
-          id: visitor.id.toString(),
-          name: visitor.visitor_name,
-          mobileNumber: visitor.mobile_number,
-          email: visitor.email_address,
-          company: visitor.company,
-          personToMeet: {
-            id: visitor.person_to_meet,
-            displayName: approverDetailsMap.get(visitor.person_to_meet) || visitor.person_to_meet,
-          },
-          reasonForVisit: visitor.reason_to_visit,
-          status: normalizedStatus === 'waiting' ? 'pending' : normalizedStatus,
-          submittedAt: visitor.check_in_time,
-          visitorNumber: normalizedStatus === 'approved' ? visitor.id.toString() : undefined,
-          approvedAt: normalizedStatus === 'approved' ? visitor.updated_at : undefined,
-          rejectedAt: normalizedStatus === 'rejected' ? visitor.updated_at : undefined,
-          rejectionReason: visitor.rejection_reason,
-          rawId: visitor.id, // Store the raw ID for API calls
-          imageUrl: visitor.img_url || visitor.image_url, // Support both field names
-          healthDeclaration: visitor.health_declaration,
-          warehouse: visitor.warehouse,
-          isAppointment: isAppointment, // Flag to identify appointment requests
-          timeSlot: timeSlot, // Time slot for appointments
-        };
-      });
-
-      setAllRequests(mappedRequests);
-    } catch (error) {
-      // Provide user-friendly error messages
-      if (error instanceof TypeError && error.message.includes('fetch')) {
-        addToast('Cannot connect to server. Please ensure the backend is running.', 'error');
-      } else if (error instanceof Error) {
-        addToast(error.message, 'error');
-      } else {
-        addToast('Failed to fetch all visitor requests. Please try again.', 'error');
+      if (activeLoadRef.current === controller) {
+        activeLoadRef.current = null;
+        setIsLoading(false);
       }
-    } finally {
-      setIsLoading(false);
     }
-  }, [user, addToast, logout]);
+  }, [user, activeTab, page, addToast, logout]);
 
   // Helper function to check if email is an admin email
   const isAdminEmail = (email: string | undefined): boolean => {
@@ -284,59 +201,34 @@ export default function DashboardPage() {
     }
   }, [authLoading, isAuthenticated, user, router]);
 
-  // Fetch requests when user is available (only on mount or when user changes)
+  // Fetch whenever the user, tab or page changes
   useEffect(() => {
-    if (user) {
-      fetchRequests();
-      // Fetch all requests if user is a superuser
-      if (user.superuser) {
-        fetchAllRequests();
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]); // Only re-fetch when user changes, not when functions change
+    fetchRequests();
+  }, [fetchRequests]);
 
-  // Poll for status updates every 10 seconds (only when user is logged in)
-  // Note: We don't depend on requests/allRequests to avoid infinite loops
+  // Refresh the current page in the background, and straight away when the browser tab
+  // is reopened. Skipped while hidden or while a load is running, so requests can't pile up.
   useEffect(() => {
-    if (!user) {
-      // Clear polling if user logs out
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
-      }
-      return;
-    }
+    if (!user) return;
 
-    // Clear any existing interval first
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
-    }
-
-    // Start polling - fetch updates every 10 seconds (silent = no loading spinner)
-    // The polling will continue until user logs out or component unmounts
-    pollingIntervalRef.current = setInterval(() => {
+    const refresh = () => {
+      if (document.hidden || activeLoadRef.current) return;
       fetchRequests(true);
-      if (user.superuser) {
-        fetchAllRequests(true);
-      }
-    }, 10000); // Poll every 10 seconds
+    };
+
+    const intervalId = setInterval(refresh, POLL_INTERVAL_MS);
+    document.addEventListener('visibilitychange', refresh);
 
     return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
-      }
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', refresh);
     };
-    // Only depend on user - fetchRequests/fetchAllRequests are stable callbacks
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, [user, fetchRequests]);
 
-  // All hooks must be called before any conditional returns
-  const filteredRequests = useMemo(() => {
-    return requests;
-  }, [requests]);
+  // Cancel any load still running when leaving the page
+  useEffect(() => {
+    return () => activeLoadRef.current?.abort();
+  }, []);
 
   // Show loading state while checking auth
   if (authLoading) {
@@ -348,14 +240,20 @@ export default function DashboardPage() {
     return null;
   }
 
-  const pendingRequests = filteredRequests.filter((r) => r.status === 'pending');
-  const approvedRequests = filteredRequests.filter((r) => r.status === 'approved');
-  const rejectedRequests = filteredRequests.filter((r) => r.status === 'rejected');
+  const handleTabChange = (tab: string) => {
+    if (tab === activeTab) return;
+    setActiveTab(tab);
+    setPage(1);
+    setRequests([]);
+    setTotalRequests(0);
+    setIsLoading(true);
+  };
 
-  // For "All Requests" tab - separate pending, approved, rejected from all requests
-  const allPendingRequests = allRequests.filter((r) => r.status === 'pending');
-  const allApprovedRequests = allRequests.filter((r) => r.status === 'approved');
-  const allRejectedRequests = allRequests.filter((r) => r.status === 'rejected');
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage);
+    setIsLoading(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const handleApprove = async (id: string) => {
     // Prevent approvals from "All Requests" tab
@@ -383,10 +281,7 @@ export default function DashboardPage() {
       }
 
       addToast('Visitor approved successfully.', 'success');
-      fetchRequests(); // Refresh the user's requests
-      if (user.superuser) {
-        fetchAllRequests(); // Refresh all requests for superusers
-      }
+      fetchRequests(true); // Refresh without replacing the cards with a spinner
     } catch (error) {
       // Provide more specific error messages
       if (error instanceof TypeError && error.message === 'Failed to fetch') {
@@ -429,10 +324,7 @@ export default function DashboardPage() {
       }
 
       addToast('Visitor request rejected.', 'error');
-      fetchRequests(); // Refresh the user's requests
-      if (user.superuser) {
-        fetchAllRequests(); // Refresh all requests for superusers
-      }
+      fetchRequests(true); // Refresh without replacing the cards with a spinner
     } catch (error) {
       // Provide more specific error messages
       if (error instanceof TypeError && error.message === 'Failed to fetch') {
@@ -444,23 +336,6 @@ export default function DashboardPage() {
       }
     }
   };
-
-  const getDisplayRequests = () => {
-    switch (activeTab) {
-      case 'Pending':
-        return pendingRequests;
-      case 'Approved':
-        return approvedRequests;
-      case 'Rejected':
-        return rejectedRequests;
-      case 'All Requests':
-        return allRequests;
-      default:
-        return pendingRequests;
-    }
-  };
-
-  const displayRequests = getDisplayRequests();
 
   // Build tabs array based on user permissions
   const tabs = user.superuser
@@ -510,7 +385,7 @@ export default function DashboardPage() {
                   <p className="mt-1 md:mt-2 text-xs md:text-sm lg:text-base text-gray-600">
                     Logged in as <strong className="text-gray-900">{user.name}</strong>
                     {user.superuser && (
-                      <span className="ml-1.5 md:ml-2 inline-flex items-center px-2 md:px-3 py-0.5 md:py-1 rounded-full text-[10px] md:text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
+                      <span className="ml-1.5 md:ml-2 inline-flex items-center px-2 md:px-3 py-0.5 md:py-1 rounded-full text-[12px] md:text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
                         Superuser
                       </span>
                     )}
@@ -518,13 +393,13 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex items-center gap-2 md:gap-3">
                   <div className="text-right">
-                    <p className="text-[10px] md:text-xs text-gray-500 uppercase tracking-wide">Total</p>
-                    <p className="text-lg md:text-xl lg:text-2xl font-bold text-gray-900">{filteredRequests.length}</p>
+                    <p className="text-[12px] md:text-xs text-gray-500 uppercase tracking-wide">Total</p>
+                    <p className="text-lg md:text-xl lg:text-2xl font-bold text-gray-900">{myStats?.total_visitors ?? 0}</p>
                   </div>
                   <div className="h-8 md:h-12 w-px bg-gray-300"></div>
                   <div className="text-right">
-                    <p className="text-[10px] md:text-xs text-gray-500 uppercase tracking-wide">Pending</p>
-                    <p className="text-lg md:text-xl lg:text-2xl font-bold text-blue-600">{pendingRequests.length}</p>
+                    <p className="text-[12px] md:text-xs text-gray-500 uppercase tracking-wide">Pending</p>
+                    <p className="text-lg md:text-xl lg:text-2xl font-bold text-blue-600">{myStats?.waiting ?? 0}</p>
                   </div>
                 </div>
               </div>
@@ -535,7 +410,7 @@ export default function DashboardPage() {
               <TabSwitcher
                 tabs={tabs}
                 activeTab={activeTab}
-                onChange={setActiveTab}
+                onChange={handleTabChange}
                 className="px-2 md:px-4 lg:px-6"
               />
             </div>
@@ -548,7 +423,7 @@ export default function DashboardPage() {
                 <div className="inline-block animate-spin rounded-full h-6 w-6 md:h-8 md:w-8 border-2 md:border-4 border-gray-300 border-t-blue-600 mb-3 md:mb-4"></div>
                 <p className="text-xs md:text-sm lg:text-base text-gray-600 font-medium">Loading requests...</p>
               </div>
-            ) : displayRequests.length === 0 ? (
+            ) : requests.length === 0 ? (
               <div className="bg-white rounded-xl md:rounded-2xl shadow-professional-lg border border-gray-200 p-6 md:p-12 text-center">
                 <svg className="mx-auto h-8 w-8 md:h-12 md:w-12 text-gray-400 mb-3 md:mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -565,30 +440,30 @@ export default function DashboardPage() {
                   <div className="bg-blue-50 border border-blue-200 rounded-lg md:rounded-xl p-2.5 md:p-4 lg:p-5 shadow-sm">
                     <div className="flex flex-wrap items-center gap-2 md:gap-4">
                       <div>
-                        <p className="text-[10px] md:text-xs text-blue-600 uppercase tracking-wide font-semibold mb-0.5 md:mb-1">Viewing All Requests</p>
+                        <p className="text-[12px] md:text-xs text-blue-600 uppercase tracking-wide font-semibold mb-0.5 md:mb-1">Viewing All Requests</p>
                         <p className="text-xs md:text-sm text-blue-900">
-                          <strong className="text-sm md:text-base lg:text-lg">{allRequests.length}</strong> total visitors
+                          <strong className="text-sm md:text-base lg:text-lg">{allStats?.total_visitors ?? 0}</strong> total visitors
                         </p>
                       </div>
                       <div className="flex gap-2 md:gap-4 text-xs md:text-sm">
                         <div>
-                          <span className="text-blue-600 font-semibold">{allPendingRequests.length}</span>
+                          <span className="text-blue-600 font-semibold">{allStats?.waiting ?? 0}</span>
                           <span className="text-blue-700 ml-0.5 md:ml-1">pending</span>
                         </div>
                         <div>
-                          <span className="text-green-600 font-semibold">{allApprovedRequests.length}</span>
+                          <span className="text-green-600 font-semibold">{allStats?.approved ?? 0}</span>
                           <span className="text-green-700 ml-0.5 md:ml-1">approved</span>
                         </div>
                         <div>
-                          <span className="text-red-600 font-semibold">{allRejectedRequests.length}</span>
+                          <span className="text-red-600 font-semibold">{allStats?.rejected ?? 0}</span>
                           <span className="text-red-700 ml-0.5 md:ml-1">rejected</span>
                         </div>
                       </div>
                     </div>
                   </div>
                 )}
-                <div className="grid gap-3 md:gap-4 lg:gap-6 lg:grid-cols-2 xl:grid-cols-3">
-                  {displayRequests.map((request) => {
+                <div className="grid grid-cols-1 gap-3 md:gap-4 lg:gap-6 lg:grid-cols-2 xl:grid-cols-3">
+                  {requests.map((request) => {
                     // Determine the mode for each card
                     // In "All Requests" tab, show cards in view-only mode (use approved/rejected based on status, but never pending)
                     let cardMode: 'pending' | 'approved' | 'rejected';
@@ -614,6 +489,12 @@ export default function DashboardPage() {
                     );
                   })}
                 </div>
+                <RequestsPagination
+                  page={page}
+                  pageSize={PAGE_SIZE}
+                  total={totalRequests}
+                  onChange={handlePageChange}
+                />
               </>
             )}
           </div>

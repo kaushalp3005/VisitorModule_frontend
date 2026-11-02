@@ -1,6 +1,43 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+
+// The API signs a new S3 link on every response, so the query string changes even
+// when the photo doesn't. Compare without it so polling doesn't reload the photo.
+const withoutSignature = (url: string | undefined) => url?.split('?')[0];
+
+function useVisitorImage(src: string | undefined) {
+  const [imageUrl, setImageUrl] = useState(src);
+  const [imageError, setImageError] = useState(false);
+  const [imageLoading, setImageLoading] = useState(true);
+
+  useEffect(() => {
+    const samePhoto = withoutSignature(src) === withoutSignature(imageUrl);
+    // Keep the link on screen, but give a failed photo another try with the newer link.
+    if (samePhoto && !imageError) return;
+
+    setImageUrl(src);
+    if (!samePhoto) {
+      setImageError(false);
+      setImageLoading(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src]);
+
+  return {
+    imageUrl,
+    imageError,
+    imageLoading,
+    handleLoad: () => {
+      setImageError(false);
+      setImageLoading(false);
+    },
+    handleError: () => {
+      setImageError(true);
+      setImageLoading(false);
+    },
+  };
+}
 
 interface VisitorImageProps {
   src: string | undefined;
@@ -10,10 +47,7 @@ interface VisitorImageProps {
 }
 
 export function VisitorImage({ src, alt, size = 'medium', className = '' }: VisitorImageProps) {
-  const [imageError, setImageError] = useState(false);
-  const [imageLoading, setImageLoading] = useState(true);
-
-  const imageUrl = src;
+  const { imageUrl, imageError, imageLoading, handleLoad, handleError } = useVisitorImage(src);
 
   if (!imageUrl || imageError) {
     const sizeClasses = {
@@ -37,6 +71,7 @@ export function VisitorImage({ src, alt, size = 'medium', className = '' }: Visi
             clipRule="evenodd"
           />
         </svg>
+        {imageUrl && <img src={imageUrl} alt="" hidden onLoad={handleLoad} onError={handleError} />}
       </div>
     );
   }
@@ -58,11 +93,8 @@ export function VisitorImage({ src, alt, size = 'medium', className = '' }: Visi
         src={imageUrl}
         alt={alt}
         className={`${sizeClasses[size]} object-cover rounded-lg border-2 border-border ${imageLoading ? 'opacity-0' : 'opacity-100'} transition-opacity duration-200`}
-        onLoad={() => setImageLoading(false)}
-        onError={() => {
-          setImageError(true);
-          setImageLoading(false);
-        }}
+        onLoad={handleLoad}
+        onError={handleError}
       />
     </div>
   );
@@ -75,10 +107,7 @@ interface VisitorThumbnailProps {
 }
 
 export function VisitorThumbnail({ src, alt, className = '' }: VisitorThumbnailProps) {
-  const [imageError, setImageError] = useState(false);
-  const [imageLoading, setImageLoading] = useState(true);
-
-  const imageUrl = src;
+  const { imageUrl, imageError, imageLoading, handleLoad, handleError } = useVisitorImage(src);
 
   if (!imageUrl || imageError) {
     return (
@@ -90,6 +119,7 @@ export function VisitorThumbnail({ src, alt, className = '' }: VisitorThumbnailP
             clipRule="evenodd"
           />
         </svg>
+        {imageUrl && <img src={imageUrl} alt="" hidden onLoad={handleLoad} onError={handleError} />}
       </div>
     );
   }
@@ -105,11 +135,8 @@ export function VisitorThumbnail({ src, alt, className = '' }: VisitorThumbnailP
         src={imageUrl}
         alt={alt}
         className={`w-12 h-12 object-cover rounded-full border-2 border-border ${className} ${imageLoading ? 'opacity-0' : 'opacity-100'} transition-opacity duration-200`}
-        onLoad={() => setImageLoading(false)}
-        onError={() => {
-          setImageError(true);
-          setImageLoading(false);
-        }}
+        onLoad={handleLoad}
+        onError={handleError}
       />
     </div>
   );

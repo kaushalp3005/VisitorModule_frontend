@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, User } from 'lucide-react';
@@ -12,68 +12,79 @@ import { Label } from '@/components/ui/label';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { identify } = useAuth();
-  const [fullName, setFullName] = useState('');
+  const { sendLoginOtp, verifyLoginOtp } = useAuth();
+  const [employeeId, setEmployeeId] = useState('');
+  const [otp, setOtp] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [info, setInfo] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [resendIn, setResendIn] = useState(0);
 
-  // Helper function to check if email is an admin email
-  const isAdminEmail = (email: string | undefined): boolean => {
-    if (!email) return false;
-    const adminEmails = [
-      'admin01@candorfoods.in',
-      'admin02@candorfoods.in',
-      'admin03@candorfoods.in',
-      'admin04@candorfoods.in',
-      'admin05@candorfoods.in',
-    ];
-    return adminEmails.includes(email.toLowerCase());
-  };
+  // Count down until the backend will accept another send
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const timer = setTimeout(() => setResendIn(resendIn - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendIn]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const requestOtp = async () => {
     setError('');
+    setInfo('');
 
-    const trimmedName = fullName.trim();
-    if (!trimmedName) {
-      setError('Please enter your full name.');
+    const trimmedId = employeeId.trim();
+    if (!trimmedId) {
+      setError('Please enter your Employee ID.');
       return;
     }
 
     setIsLoading(true);
 
     try {
-      const success = await identify(trimmedName);
+      const result = await sendLoginOtp(trimmedId);
 
-      if (success) {
-        // Get user from auth store to check role
-        const authData = localStorage.getItem('auth_user');
-        if (authData) {
-          try {
-            const user = JSON.parse(authData);
-            // Redirect admin emails to admin page, others to dashboard
-            if (user.superuser || (user.admin && isAdminEmail(user.email))) {
-              router.push('/admin');
-            } else if (isAdminEmail(user.email)) {
-              router.push('/admin');
-            } else {
-              router.push('/dashboard');
-            }
-          } catch (e) {
-            router.push('/dashboard');
-          }
-        } else {
-          router.push('/dashboard');
-        }
-        router.refresh();
+      if (result.success) {
+        setOtpSent(true);
+        setOtp('');
+        setInfo(result.message);
+        setResendIn(result.resendAfterSeconds ?? 0);
       } else {
-        setError('No employee found with this name. Please enter your full name as registered.');
+        setError(result.message);
       }
-    } catch (err) {
-      setError('An error occurred. Please try again.');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSendOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await requestOtp();
+  };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setIsLoading(true);
+
+    try {
+      const result = await verifyLoginOtp(employeeId.trim(), otp);
+
+      if (result.success) {
+        router.push('/dashboard');
+        router.refresh();
+      } else {
+        setError(result.message);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleChangeEmployeeId = () => {
+    setOtpSent(false);
+    setOtp('');
+    setInfo('');
+    setError('');
   };
 
   return (
@@ -98,25 +109,64 @@ export default function LoginPage() {
               </div>
               <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome</h1>
               <p className="text-sm text-gray-600">
-                Enter your full name to access the visitor approval dashboard
+                Sign in with your Employee ID to access the visitor approval dashboard
               </p>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-5">
+            <form onSubmit={otpSent ? handleVerifyOtp : handleSendOtp} className="space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="fullName" className="text-sm font-semibold text-gray-700">Your Full Name</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="employeeId" className="text-sm font-semibold text-gray-700">Employee ID</Label>
+                  {otpSent && (
+                    <button
+                      type="button"
+                      onClick={handleChangeEmployeeId}
+                      disabled={isLoading}
+                      className="text-xs text-[#7a2e2e] hover:text-[#8a3e3e] hover:underline disabled:opacity-50"
+                    >
+                      Change
+                    </button>
+                  )}
+                </div>
                 <Input
-                  id="fullName"
+                  id="employeeId"
                   type="text"
-                  placeholder="Name Surname"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="e.g. CF0001"
+                  value={employeeId}
+                  onChange={(e) => setEmployeeId(e.target.value)}
                   required
-                  disabled={isLoading}
+                  disabled={isLoading || otpSent}
                   autoFocus
+                  autoComplete="username"
                   className="w-full h-12 text-sm border-gray-300 focus:ring-2 focus:ring-[#7a2e2e] focus:border-[#7a2e2e]"
                 />
               </div>
+
+              {otpSent && (
+                <div className="space-y-2">
+                  <Label htmlFor="otp" className="text-sm font-semibold text-gray-700">OTP</Label>
+                  <Input
+                    id="otp"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="6-digit code"
+                    value={otp}
+                    onChange={(e) => { setOtp(e.target.value.replace(/\D/g, '').slice(0, 6)); if (error) setError(''); }}
+                    maxLength={6}
+                    required
+                    disabled={isLoading}
+                    autoFocus
+                    autoComplete="one-time-code"
+                    className="w-full h-12 text-sm tracking-widest font-mono border-gray-300 focus:ring-2 focus:ring-[#7a2e2e] focus:border-[#7a2e2e]"
+                  />
+                </div>
+              )}
+
+              {info && !error && (
+                <div className="rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-800">
+                  {info} It expires in 5 minutes.
+                </div>
+              )}
 
               {error && (
                 <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
@@ -124,18 +174,40 @@ export default function LoginPage() {
                 </div>
               )}
 
-              <Button
-                type="submit"
-                className="w-full h-12 text-base font-semibold bg-[#7a2e2e] text-white hover:bg-[#8a3e3e] shadow-md hover:shadow-lg transition-all"
-                disabled={isLoading}
-              >
-                {isLoading ? 'Verifying...' : 'Continue'}
-              </Button>
+              {otpSent ? (
+                <>
+                  <Button
+                    type="submit"
+                    className="w-full h-12 text-base font-semibold bg-[#7a2e2e] text-white hover:bg-[#8a3e3e] shadow-md hover:shadow-lg transition-all"
+                    disabled={isLoading || otp.length < 6}
+                  >
+                    {isLoading ? 'Please wait...' : 'Verify & Sign In'}
+                  </Button>
+                  <div className="text-center">
+                    <button
+                      type="button"
+                      onClick={requestOtp}
+                      disabled={isLoading || resendIn > 0}
+                      className="text-sm text-[#7a2e2e] hover:text-[#8a3e3e] hover:underline disabled:text-gray-400 disabled:no-underline"
+                    >
+                      {resendIn > 0 ? `Resend OTP in ${resendIn}s` : 'Resend OTP'}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <Button
+                  type="submit"
+                  className="w-full h-12 text-base font-semibold bg-[#7a2e2e] text-white hover:bg-[#8a3e3e] shadow-md hover:shadow-lg transition-all"
+                  disabled={isLoading}
+                >
+                  {isLoading ? 'Sending...' : 'Send OTP'}
+                </Button>
+              )}
             </form>
 
             <div className="text-center mt-6 pt-6 border-t border-gray-200">
               <p className="text-xs text-gray-500">
-                Your session will remain active for 7 days
+                Your session will remain active for 14 days
               </p>
             </div>
           </div>

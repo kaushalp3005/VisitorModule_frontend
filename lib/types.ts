@@ -23,6 +23,7 @@ export type PersonToMeet = {
   id: string;
   displayName: string;
   contact?: string;
+  warehouse?: string;
 };
 
 export const PEOPLE_TO_MEET: PersonToMeet[] = [

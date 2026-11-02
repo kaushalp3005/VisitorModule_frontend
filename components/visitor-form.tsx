@@ -200,7 +200,8 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
         console.log('[VisitorForm] Approvers data received:', data);
         const formattedApprovers: PersonToMeet[] = (data.approvers || data || []).map((approver: any) => ({
           id: approver.username,
-          displayName: approver.name
+          displayName: approver.name,
+          warehouse: approver.warehouse
         }));
         console.log('[VisitorForm] Loaded approvers:', formattedApprovers.length);
         setApprovers(formattedApprovers);
@@ -383,6 +384,8 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
       const canvas = canvasRef.current;
       const context = canvas.getContext('2d');
 
+      // The stream can attach before its first frame; capturing then gives an empty image.
+      if (!video.videoWidth || !video.videoHeight) return;
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
 
@@ -487,9 +490,12 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
   };
 
   const handlePersonSelect = (value: string) => {
+    const person = approvers.find((approver) => approver.id === value);
     setFormData((prev) => ({
       ...prev,
       personToMeet: value,
+      // The person being met decides the warehouse.
+      warehouse: person?.warehouse || warehouseName || '',
     }));
     setPersonPopoverOpen(false);
     if (errors.personToMeet) {
@@ -967,7 +973,7 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
         )}
       </div>
 
-        {formData.warehouse && (
+        {formData.personToMeet && formData.warehouse && (
         <div>
           <label htmlFor="warehouse" className="block text-sm font-semibold text-gray-700 mb-2">
             Warehouse Location
@@ -981,7 +987,7 @@ export function VisitorForm({ onSubmit, isLoading = false, warehouseName }: Visi
             className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm bg-gray-50 text-gray-600 cursor-not-allowed"
           />
           <p className="mt-1.5 text-xs text-gray-500">
-            Auto-filled from QR scan
+            Based on the person you are meeting
           </p>
         </div>
       )}

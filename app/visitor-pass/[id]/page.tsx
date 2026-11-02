@@ -10,6 +10,7 @@ import { API_ENDPOINTS } from '@/lib/api-config';
 import { VisitorImage } from '@/components/visitor-image';
 import { Toast, useToast } from '@/components/toast';
 import { CheckCircle2, XCircle, Clock, Download, Printer, ArrowLeft } from 'lucide-react';
+import { registrationHref } from '@/lib/warehouse';
 
 interface VisitorData {
   id: number;
@@ -89,9 +90,11 @@ export default function VisitorPassPage() {
   };
 
   // Stop polling once the visitor record is finalised (APPROVED/REJECTED with
-  // an image). Including visitor.status / visitor.img_url in the deps ensures
-  // the effect re-runs and clears the previous interval — without this, a stale
-  // closure makes the gate always true and polling runs forever.
+  // an image). Including visitor.status / whether img_url is set in the deps
+  // ensures the effect re-runs and clears the previous interval — without this,
+  // a stale closure makes the gate always true and polling runs forever. Depend
+  // on the presence of img_url, not its value: the API signs a new link on every
+  // response, so the value would re-run this effect (and refetch) in a tight loop.
   useEffect(() => {
     if (!visitorId) return;
 
@@ -109,7 +112,7 @@ export default function VisitorPassPage() {
 
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visitorId, visitor?.status, visitor?.img_url]);
+  }, [visitorId, visitor?.status, Boolean(visitor?.img_url)]);
 
   // Show toast notification when visitor data is first loaded
   useEffect(() => {
@@ -242,8 +245,9 @@ ${visitor.check_out_time ? `Check-out Time: ${new Date(visitor.check_out_time).t
     <>
       <AppHeader
         className="print:hidden"
+        homeHref={registrationHref(visitor.warehouse)}
         rightContent={
-          <Link href="/">
+          <Link href={registrationHref(visitor.warehouse)}>
             <Button variant="outline" size="sm">
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back to Check-In
@@ -273,7 +277,7 @@ ${visitor.check_out_time ? `Check-out Time: ${new Date(visitor.check_out_time).t
                   size="medium"
                 />
                 <div className="text-center">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[10px]">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[12px]">
                     Visitor ID
                   </p>
                   <p className="text-2xl font-mono font-bold text-foreground print:text-lg">{visitor.id}</p>
@@ -289,7 +293,7 @@ ${visitor.check_out_time ? `Check-out Time: ${new Date(visitor.check_out_time).t
 
                 <div className="space-y-3 print:space-y-1.5">
                   <div>
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[10px] print:mb-0.5">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[12px] print:mb-0.5">
                       Mobile Number
                     </p>
                     <p className="text-foreground font-medium print:text-sm">{visitor.mobile_number}</p>
@@ -297,7 +301,7 @@ ${visitor.check_out_time ? `Check-out Time: ${new Date(visitor.check_out_time).t
 
                   {visitor.email_address && (
                     <div>
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[10px] print:mb-0.5">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[12px] print:mb-0.5">
                         Email
                       </p>
                       <p className="text-foreground font-medium print:text-sm">{visitor.email_address}</p>
@@ -306,7 +310,7 @@ ${visitor.check_out_time ? `Check-out Time: ${new Date(visitor.check_out_time).t
 
                   {visitor.company && (
                     <div>
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[10px] print:mb-0.5">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[12px] print:mb-0.5">
                         Company
                       </p>
                       <p className="text-foreground font-medium print:text-sm">{visitor.company}</p>
@@ -314,7 +318,7 @@ ${visitor.check_out_time ? `Check-out Time: ${new Date(visitor.check_out_time).t
                   )}
 
                   <div>
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[10px] print:mb-0.5">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[12px] print:mb-0.5">
                       Person to Meet
                     </p>
                     <p className="text-foreground font-medium print:text-sm">
@@ -323,7 +327,7 @@ ${visitor.check_out_time ? `Check-out Time: ${new Date(visitor.check_out_time).t
                   </div>
 
                   <div>
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[10px] print:mb-0.5">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[12px] print:mb-0.5">
                       Purpose
                     </p>
                     <p className="text-foreground font-medium print:text-sm">{visitor.reason_to_visit}</p>
@@ -331,7 +335,7 @@ ${visitor.check_out_time ? `Check-out Time: ${new Date(visitor.check_out_time).t
 
                   {visitor.warehouse && (
                     <div>
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[10px] print:mb-0.5">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[12px] print:mb-0.5">
                         Warehouse
                       </p>
                       <p className="text-foreground font-medium print:text-sm">{visitor.warehouse}</p>
@@ -339,7 +343,7 @@ ${visitor.check_out_time ? `Check-out Time: ${new Date(visitor.check_out_time).t
                   )}
 
                   <div>
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[10px] print:mb-0.5">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[12px] print:mb-0.5">
                       Check-in Time
                     </p>
                     <p className="text-foreground font-medium text-sm print:text-xs">{formatTime(visitor.check_in_time)}</p>
@@ -347,7 +351,7 @@ ${visitor.check_out_time ? `Check-out Time: ${new Date(visitor.check_out_time).t
 
                   {visitor.check_out_time && (
                     <div>
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[10px] print:mb-0.5">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1 print:text-[12px] print:mb-0.5">
                         Check-out Time
                       </p>
                       <p className="text-foreground font-medium text-sm print:text-xs">
@@ -383,7 +387,7 @@ ${visitor.check_out_time ? `Check-out Time: ${new Date(visitor.check_out_time).t
               <Download className="mr-2 h-4 w-4" />
               Download Pass
             </Button>
-            <Link href="/" className="flex-1">
+            <Link href={registrationHref(visitor.warehouse)} className="flex-1">
               <Button variant="default" className="w-full">
                 New Check-In
               </Button>

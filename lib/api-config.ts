@@ -54,7 +54,8 @@ export const API_ENDPOINTS = {
   appointments: `${API_URL}/api/appointments`,
   auth: {
     login: `${API_URL}/api/approvers/login`,
-    identify: `${API_URL}/api/approvers/identify`,
+    sendLoginOtp: `${API_URL}/api/approvers/send-login-otp`,
+    verifyLoginOtp: `${API_URL}/api/approvers/verify-login-otp`,
     forgotPassword: `${API_URL}/api/approvers/forgot-password`,
   },
 } as const;

@@ -264,7 +264,7 @@ export function ManageApprovers() {
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-xs md:text-sm">
-            <thead className="bg-gray-50 text-gray-600 uppercase text-[10px] md:text-xs">
+            <thead className="bg-gray-50 text-gray-600 uppercase text-[12px] md:text-xs">
               <tr>
                 <th className="px-3 py-2 text-left">Username</th>
                 <th className="px-3 py-2 text-left">Name</th>
@@ -286,22 +286,22 @@ export function ManageApprovers() {
                   <td className="px-3 py-2">
                     <div className="flex gap-1 flex-wrap">
                       {a.superuser && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-100 text-purple-800 border border-purple-200">
+                        <span className="px-2 py-0.5 rounded-full text-[12px] font-semibold bg-purple-100 text-purple-800 border border-purple-200">
                           Superuser
                         </span>
                       )}
                       {a.admin && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+                        <span className="px-2 py-0.5 rounded-full text-[12px] font-semibold bg-blue-100 text-blue-800 border border-blue-200">
                           Admin
                         </span>
                       )}
                       {!a.is_active && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-200 text-gray-700 border border-gray-300">
+                        <span className="px-2 py-0.5 rounded-full text-[12px] font-semibold bg-gray-200 text-gray-700 border border-gray-300">
                           Inactive
                         </span>
                       )}
                       {!a.superuser && !a.admin && a.is_active && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200">
+                        <span className="px-2 py-0.5 rounded-full text-[12px] font-semibold bg-green-100 text-green-800 border border-green-200">
                           Approver
                         </span>
                       )}
